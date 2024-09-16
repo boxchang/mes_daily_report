@@ -1,5 +1,8 @@
 import sys
 import os
+
+from database import mes_database
+
 curPath = os.path.abspath(os.path.dirname(__file__))
 rootPath = os.path.split(curPath)[0]
 sys.path.append(rootPath)
@@ -10,7 +13,6 @@ from email.mime.base import MIMEBase
 from email import encoders
 from email.mime.image import MIMEImage
 import pandas as pd
-from jobs.database import mes_database
 from openpyxl.styles import Alignment, NamedStyle, Font, Border, Side
 import matplotlib.pyplot as plt
 from io import BytesIO

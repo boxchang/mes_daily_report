@@ -33,6 +33,14 @@ class mes_daily_report(object):
     header_alignment = Alignment(horizontal='center')
     header_border = Border(bottom=Side(style='thin'))
 
+    # 配置日志记录器
+    logging.basicConfig(
+        level=logging.DEBUG,  # 设置日志级别为 DEBUG，这样所有级别的日志都会被记录
+        format='%(asctime)s - %(levelname)s - %(message)s',  # 指定日志格式
+        filename='app.log',  # 指定日志文件
+        filemode='w'  # 写入模式，'w' 表示每次运行程序时会覆盖日志文件
+    )
+
     def __init__(self, report_date1, report_date2):
         self.report_date1 = report_date1
         self.report_date2 = report_date2
@@ -74,7 +82,7 @@ class mes_daily_report(object):
         smtp_server = smtp_config.get('smtp_server')
         smtp_port = int(smtp_config.get('smtp_port', 587))
         smtp_user = smtp_config.get('smtp_user')
-
+        smtp_password = smtp_config.get('smtp_password')
         sender_alias = "GD Report"
         sender_email = smtp_user
         # Mail Info
@@ -118,12 +126,14 @@ class mes_daily_report(object):
         # Send Email
         try:
             server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()  # 启用 TLS 加密
+            server.login(smtp_user, smtp_password)  # 登录到 SMTP 服务器
             server.sendmail(smtp_user, to_emails, msg.as_string())
             server.quit()
             print("Sent Email Successfully")
         except Exception as e:
             print(f"Sent Email Fail: {e}")
-
+            logging.info(f"Sent Email Fail: {e}")
         finally:
             attachment.close()
 
@@ -157,6 +167,10 @@ class mes_daily_report(object):
                 df_detail = self.get_df_detail(db, report_date1, report_date2, plant)
 
                 df_final = pd.merge(df_main, df_detail, on=['Name', 'Period', 'Line'], how='left')
+
+                df_output = self.get_df_output(db, report_date1, report_date2, plant)
+
+                df_final = pd.merge(df_final, df_output, on=['Name', 'Period', 'Line'], how='left')
 
                 df_final['Period'] = df_final['Period'].astype(str).str.zfill(2) + ":00"
 
@@ -352,16 +366,29 @@ class mes_daily_report(object):
 
                 tmp_rows = []
                 for line_name, line_group in line_grouped:
-                    line_sum_df = line_group.groupby(['Name', 'Shift', 'Line']).agg({
-                        'min_speed': 'min',  # Min speed
-                        'max_speed': 'max',  # Max speed
-                        'avg_speed': 'mean',  # Average speed
-                        'sum_qty': 'sum',
-                    }).reset_index()
+                    # line_sum_df = line_group.groupby(['Name', 'Shift', 'Line']).agg({
+                    #     'min_speed': 'min',  # Min speed
+                    #     'max_speed': 'max',  # Max speed
+                    #     'avg_speed': 'mean',  # Average speed
+                    #     'sum_qty': 'sum',
+                    # }).reset_index()
+                    #
+                    # # Add AQL Column to fit format
+                    # line_sum_df.insert(line_sum_df.columns.get_loc('Name') + 1, 'ProductItem', None)
+                    # line_sum_df.insert(line_sum_df.columns.get_loc('Name') + 2, 'AQL', None)
 
-                    # Add AQL Column to fit format
-                    line_sum_df.insert(line_sum_df.columns.get_loc('Name') + 1, 'ProductItem', None)
-                    line_sum_df.insert(line_sum_df.columns.get_loc('Name') + 2, 'AQL', None)
+                    subtotal = {
+                        'Name': '',
+                        'ProductItem': join_values(line_group['ProductItem']),
+                        'AQL': join_values(line_group['AQL']),
+                        'Shift': join_values(line_group['Shift']),
+                        'Line': '',
+                        'max_speed': line_group['max_speed'].max(),
+                        'min_speed': line_group['min_speed'].min(),
+                        'avg_speed': line_group['avg_speed'].mean(),
+                        'sum_qty': line_group['sum_qty'].sum(),
+                    }
+                    line_sum_df = pd.DataFrame([subtotal])
 
                     tmp_rows.append(line_sum_df)
 
@@ -372,8 +399,8 @@ class mes_daily_report(object):
                 day_df = df_tmp[df_tmp['Shift'] == '早班'].copy()
                 subtotal = {
                     'Name': '',
-                    'ProductItem': '',
-                    'AQL': '',
+                    'ProductItem': join_values(day_df['ProductItem']),
+                    'AQL': join_values(day_df['AQL']),
                     'Shift': join_values(day_df['Shift']),
                     'Line': '',
                     'max_speed': day_df['max_speed'].max(),
@@ -504,6 +531,9 @@ report_date1 = report_date1.strftime('%Y%m%d')
 
 report_date2 = datetime.today()
 report_date2 = report_date2.strftime('%Y%m%d')
+
+report_date1 = "20240914"
+report_date2 = "20240915"
 
 report = mes_daily_report(report_date1, report_date2)
 report.main()
