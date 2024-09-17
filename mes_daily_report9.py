@@ -168,13 +168,13 @@ class mes_daily_report(object):
 
                 df_final = pd.merge(df_main, df_detail, on=['Name', 'Period', 'Line'], how='left')
 
-                df_output = self.get_df_output(db, report_date1, report_date2, plant)
+                # df_output = self.get_df_output(db, report_date1, report_date2, plant)
 
-                df_final = pd.merge(df_final, df_output, on=['Name', 'Period', 'Line'], how='left')
+                # df_final = pd.merge(df_final, df_output, on=['Name', 'Period', 'Line'], how='left')
 
                 df_final['Period'] = df_final['Period'].astype(str).str.zfill(2) + ":00"
 
-                df_selected = df_final[['Date', 'Name', 'Line', 'Shift', 'WorkOrderId', 'PartNo', 'ProductItem', 'AQL', 'Period', 'max_speed', 'min_speed', 'avg_speed', 'sum_qty']]
+                df_selected = df_final[['Date', 'Name', 'Line', 'Shift', 'WorkOrderId', 'PartNo', 'ProductItem', 'ProductionTime', 'AQL', 'Period', 'max_speed', 'min_speed', 'avg_speed', 'LineSpeed', 'sum_qty', 'Output']]
 
                 df_with_subtotals, df_chart = self.sorting_data(df_selected)
                 self.generate_summary_excel(writer, df_with_subtotals)
@@ -192,7 +192,7 @@ class mes_daily_report(object):
             image_buffers.append(image_buffer)
 
         # Send Email
-        self.send_email(file_list, image_buffers, report_date1)
+        # self.send_email(file_list, image_buffers, report_date1)
 
 
     def shift(self, period):
@@ -205,14 +205,84 @@ class mes_daily_report(object):
     def get_df_main(self, db, report_date1, report_date2, plant):
         #
         sql = f"""
-                          SELECT w.MachineId,Name,wi.LineId Line,CAST(r.Period as INT) Period,wi.StartDate, wi.EndDate, wi.WorkOrderId,WorkOrderDate,CustomerName,PartNo,ProductItem,w.AQL,w.PlanQty,wi.Qty,w.Status
-                          FROM [PMG_MES_WorkOrderInfo] wi, [PMG_MES_WorkOrder] w, [PMG_DML_DataModelList] dl,[PMG_MES_RunCard] r, [PMGMES].[dbo].[PMG_MES_IPQCInspectingRecord] ipqc
-                          where wi.WorkOrderId = w.id and w.MachineId = dl.Id and r.WorkOrderId = w.Id and r.LineName = wi.LineId and ipqc.RunCardId = r.Id
-                          and wi.StartDate between CONVERT(DATETIME, '{report_date1} 05:30:00', 120) and CONVERT(DATETIME, '{report_date2} 05:29:59', 120)
-                          and ipqc.OptionName = 'Weight'
-                          and Name like '%{plant}%'
-                          order by Name,CAST(r.Period as INT),wi.LineId
-                        """
+            WITH WorkOrderInfo AS (
+                SELECT 
+                    w.MachineId,
+                    dl.Name,
+                    wi.LineId AS Line,
+                    CAST(r.Period AS INT) AS Period,
+                    wi.WorkOrderId,
+                    wi.StartDate, 
+                    wi.EndDate,
+                    WorkOrderDate,
+                    CustomerName,
+                    w.ProductItem,
+                    nss.UpperLineSpeed_Min,
+                    m.COUNTING_MACHINE,
+                    w.PartNo,
+                    w.AQL,
+                    w.PlanQty,
+                    wi.Qty,
+                    w.Status
+                FROM 
+                    [PMGMES].[dbo].[PMG_MES_WorkOrderInfo] wi
+                    JOIN [PMGMES].[dbo].[PMG_MES_WorkOrder] w ON wi.WorkOrderId = w.id
+                    JOIN [PMGMES].[dbo].[PMG_DML_DataModelList] dl ON w.MachineId = dl.Id
+                    JOIN [PMGMES].[dbo].[PMG_MES_RunCard] r ON r.WorkOrderId = w.Id AND r.LineName = wi.LineId
+                    JOIN [PMGMES].[dbo].[PMG_MES_IPQCInspectingRecord] ipqc ON ipqc.RunCardId = r.Id
+                    LEFT JOIN [PMGMES].[dbo].[PMG_MES_NBR_SCADA_Std] nss ON nss.ProductItem = w.ProductItem
+                    JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] m ON dl.Name = m.MES_MACHINE AND wi.LineId = m.LINE
+                WHERE 
+                    wi.StartDate BETWEEN CONVERT(DATETIME, '{report_date1} 05:30:00', 120) AND CONVERT(DATETIME, '{report_date2} 05:29:59', 120)
+                    AND ipqc.OptionName = 'Weight'
+                    AND dl.Name LIKE '%{plant}%'
+            ),
+            CountingData AS (
+                SELECT 
+                    m.mes_machine,
+                    CAST(DATEPART(hour, c.CreationTime) AS INT) AS Period,
+                    m.line,
+                    COUNT(*) * 5 AS CountedValue
+                FROM 
+                    [PMG_DEVICE].[dbo].[COUNTING_DATA] c
+                    JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] m ON c.MachineName = m.counting_machine
+                WHERE 
+                    m.mes_machine LIKE '%NBR%'
+                    AND c.CreationTime BETWEEN CONVERT(DATETIME, '2024-09-01 06:00:00', 120) AND CONVERT(DATETIME, '2024-09-02 05:59:59', 120)
+                    AND (c.speed < 60 OR c.speed IS NULL)
+                GROUP BY 
+                    m.mes_machine,
+                    FORMAT(c.CreationTime, 'yyyy-MM-dd'),
+                    DATEPART(hour, c.CreationTime),
+                    m.line
+            )
+            SELECT 
+                wo.MachineId,
+                wo.Name,
+                wo.Line,
+                wo.Period,
+                wo.StartDate, 
+                wo.EndDate,
+                wo.WorkOrderId,
+                wo.WorkOrderDate,
+                wo.CustomerName,
+                wo.PartNo,
+                wo.ProductItem,
+                wo.AQL,
+                wo.PlanQty,
+                wo.Qty,
+                wo.Status,
+                CAST(wo.UpperLineSpeed_Min AS INT) AS LineSpeed,
+                CAST((60 - COALESCE(cd.CountedValue, 0)) AS INT) AS ProductionTime,
+                CAST((60 - COALESCE(cd.CountedValue, 0)) * COALESCE(wo.UpperLineSpeed_Min, 0) AS INT) AS Output
+            FROM 
+                WorkOrderInfo wo
+                LEFT JOIN CountingData cd ON wo.Name = cd.mes_machine AND wo.Line = cd.line AND wo.Period = cd.Period
+            ORDER BY 
+                wo.Name, 
+                wo.Period, 
+                wo.Line;
+                """
         raws = db.select_sql_dict(sql)
 
         df_main = pd.DataFrame(raws)
@@ -359,24 +429,13 @@ class mes_daily_report(object):
             mach_grouped = group_without_period.groupby(['Name'])
 
             rows = []
+            chart_rows = []
 
             for mach_name, mach_group in mach_grouped:
-
                 line_grouped = mach_group.groupby(['Shift', 'Line'])
 
                 tmp_rows = []
                 for line_name, line_group in line_grouped:
-                    # line_sum_df = line_group.groupby(['Name', 'Shift', 'Line']).agg({
-                    #     'min_speed': 'min',  # Min speed
-                    #     'max_speed': 'max',  # Max speed
-                    #     'avg_speed': 'mean',  # Average speed
-                    #     'sum_qty': 'sum',
-                    # }).reset_index()
-                    #
-                    # # Add AQL Column to fit format
-                    # line_sum_df.insert(line_sum_df.columns.get_loc('Name') + 1, 'ProductItem', None)
-                    # line_sum_df.insert(line_sum_df.columns.get_loc('Name') + 2, 'AQL', None)
-
                     subtotal = {
                         'Name': '',
                         'ProductItem': join_values(line_group['ProductItem']),
@@ -387,6 +446,9 @@ class mes_daily_report(object):
                         'min_speed': line_group['min_speed'].min(),
                         'avg_speed': line_group['avg_speed'].mean(),
                         'sum_qty': line_group['sum_qty'].sum(),
+                        'ProductionTime': line_group['ProductionTime'].sum(),
+                        'LineSpeed': line_group['LineSpeed'].mean(),
+                        'Output': line_group['Output'].sum(),
                     }
                     line_sum_df = pd.DataFrame([subtotal])
 
@@ -407,9 +469,11 @@ class mes_daily_report(object):
                     'min_speed': day_df['min_speed'].min(),
                     'avg_speed': day_df['avg_speed'].mean(),
                     'sum_qty': day_df['sum_qty'].sum(),
+                    'ProductionTime': day_df['ProductionTime'].sum(),
+                    'LineSpeed': day_df['LineSpeed'].mean(),
+                    'Output': day_df['Output'].sum(),
                 }
                 subtotal_df = pd.DataFrame([subtotal])
-                # Average speed rounded
                 subtotal_df['avg_speed'] = subtotal_df['avg_speed'].round(0)
 
                 day_df[['Name', 'ProductItem', 'AQL', 'Shift']] = ''
@@ -430,9 +494,11 @@ class mes_daily_report(object):
                     'min_speed': night_df['min_speed'].min(),
                     'avg_speed': night_df['avg_speed'].mean(),
                     'sum_qty': night_df['sum_qty'].sum(),
+                    'ProductionTime': night_df['ProductionTime'].sum(),
+                    'LineSpeed': night_df['LineSpeed'].mean(),
+                    'Output': night_df['Output'].sum(),
                 }
                 subtotal_df = pd.DataFrame([subtotal])
-                # Average speed rounded
                 subtotal_df['avg_speed'] = subtotal_df['avg_speed'].round(0)
 
                 night_df[['Name', 'ProductItem', 'AQL', 'Shift']] = ''
@@ -441,6 +507,7 @@ class mes_daily_report(object):
                     rows.append(night_df)  # Night row data
                     rows.append(subtotal_df)  # Night Shift total summary
 
+                # Machine total summary
                 subtotal = {
                     'Name': join_values(mach_group['Name']),
                     'ProductItem': join_values(mach_group['ProductItem']),
@@ -451,9 +518,11 @@ class mes_daily_report(object):
                     'min_speed': mach_group['min_speed'].min(),
                     'avg_speed': mach_group['avg_speed'].mean(),
                     'sum_qty': mach_group['sum_qty'].sum(),
+                    'ProductionTime': mach_group['ProductionTime'].sum(),
+                    'LineSpeed': mach_group['LineSpeed'].mean(),
+                    'Output': mach_group['Output'].sum(),
                 }
                 subtotal_df = pd.DataFrame([subtotal])
-                # Average speed rounded
                 subtotal_df['avg_speed'] = subtotal_df['avg_speed'].round(0)
                 rows.append(subtotal_df)  # Machine total summary
                 chart_rows.append(subtotal_df)
@@ -461,21 +530,26 @@ class mes_daily_report(object):
             # Combine the grouped data into a DataFrame
             df_with_subtotals = pd.concat(rows, ignore_index=True)
 
-            # Change column name
-            df_with_subtotals.rename(columns={'Name': '機台號'}, inplace=True)
-            df_with_subtotals.rename(columns={'ProductItem': '品項'}, inplace=True)
-            df_with_subtotals.rename(columns={'Line': '線別'}, inplace=True)
-            df_with_subtotals.rename(columns={'Shift': '班別'}, inplace=True)
-            df_with_subtotals.rename(columns={'max_speed': '車速(最高)'}, inplace=True)
-            df_with_subtotals.rename(columns={'min_speed': '車速(最低)'}, inplace=True)
-            df_with_subtotals.rename(columns={'avg_speed': '車速(平均)'}, inplace=True)
-            df_with_subtotals.rename(columns={'sum_qty': '產量(加總)'}, inplace=True)
+            # Change column names
+            df_with_subtotals.rename(columns={
+                'Name': '機台號',
+                'ProductItem': '品項',
+                'Line': '線別',
+                'Shift': '班別',
+                'max_speed': '車速(最高)',
+                'min_speed': '車速(最低)',
+                'avg_speed': '車速(平均)',
+                'sum_qty': '產量(加總)',
+                'ProductionTime': '生產時間',
+                'LineSpeed': '線速',
+                'Output': '產量'
+            }, inplace=True)
 
             # Group the total quantity of each machine into a DataFrame
             df_chart = pd.concat(chart_rows, ignore_index=True)
 
         except Exception as e:
-            print(e)
+            print(f"An error occurred: {e}")
 
         return df_with_subtotals, df_chart
 
