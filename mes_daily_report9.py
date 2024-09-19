@@ -1,6 +1,9 @@
 import sys
 import os
 
+from matplotlib.ticker import FuncFormatter
+from openpyxl.utils import get_column_letter
+
 from database import mes_database
 
 curPath = os.path.abspath(os.path.dirname(__file__))
@@ -116,20 +119,27 @@ class mes_daily_report(object):
                 encoders.encode_base64(part)
                 part.add_header('Content-Disposition', f"attachment; filename= {file_name}")
                 msg.attach(part)
+        logging.info(f"Attached Excel files")
 
         # Attach Picture
         for i, buffer in enumerate(image_buffers):
             image = MIMEImage(buffer.read())
             image.add_header('Content-ID', f'<chart_image{i}>')
             msg.attach(image)
+        logging.info(f"Attached Picture")
 
         # Send Email
         try:
+            # server = smtplib.SMTP(smtp_server, smtp_port)
+            # server.starttls()  # 启用 TLS 加密
+            # server.login(smtp_user, smtp_password)  # 登录到 SMTP 服务器
+            # server.sendmail(smtp_user, to_emails, msg.as_string())
+            # server.quit()
+
+            # 發送郵件（不進行密碼驗證）
             server = smtplib.SMTP(smtp_server, smtp_port)
-            server.starttls()  # 启用 TLS 加密
-            server.login(smtp_user, smtp_password)  # 登录到 SMTP 服务器
+            server.ehlo()  # 啟動與伺服器的對話
             server.sendmail(smtp_user, to_emails, msg.as_string())
-            server.quit()
             print("Sent Email Successfully")
         except Exception as e:
             print(f"Sent Email Fail: {e}")
@@ -168,13 +178,9 @@ class mes_daily_report(object):
 
                 df_final = pd.merge(df_main, df_detail, on=['Name', 'Period', 'Line'], how='left')
 
-                # df_output = self.get_df_output(db, report_date1, report_date2, plant)
-
-                # df_final = pd.merge(df_final, df_output, on=['Name', 'Period', 'Line'], how='left')
-
                 df_final['Period'] = df_final['Period'].astype(str).str.zfill(2) + ":00"
 
-                df_selected = df_final[['Date', 'Name', 'Line', 'Shift', 'WorkOrderId', 'PartNo', 'ProductItem', 'ProductionTime', 'AQL', 'Period', 'max_speed', 'min_speed', 'avg_speed', 'LineSpeed', 'sum_qty', 'Output']]
+                df_selected = df_final[['Date', 'Name', 'Line', 'Shift', 'WorkOrderId', 'PartNo', 'ProductItem', 'AQL', 'ProductionTime', 'Period', 'max_speed', 'min_speed', 'avg_speed', 'LineSpeedStd', 'sum_qty', 'Target']]
 
                 df_with_subtotals, df_chart = self.sorting_data(df_selected)
                 self.generate_summary_excel(writer, df_with_subtotals)
@@ -192,8 +198,7 @@ class mes_daily_report(object):
             image_buffers.append(image_buffer)
 
         # Send Email
-        # self.send_email(file_list, image_buffers, report_date1)
-
+        self.send_email(file_list, image_buffers, report_date1)
 
     def shift(self, period):
         if 6 <= int(period) <= 17:
@@ -203,7 +208,19 @@ class mes_daily_report(object):
 
        # Work Order
     def get_df_main(self, db, report_date1, report_date2, plant):
-        #
+        scada_table = ""
+        upper_column = ""
+        lower_column = ""
+
+        if plant == "NBR":
+            upper_column = "UpperLineSpeed_Min"
+            lower_column = "LowerLineSpeed_Min"
+            scada_table = "[PMGMES].[dbo].[PMG_MES_NBR_SCADA_Std]"
+        elif plant == "PVC":
+            upper_column = "UpperSpeed"
+            lower_column = "LowerSpeed"
+            scada_table = "[PMGMES].[dbo].[PMG_MES_PVC_SCADA_Std]"
+
         sql = f"""
             WITH WorkOrderInfo AS (
                 SELECT 
@@ -217,7 +234,7 @@ class mes_daily_report(object):
                     WorkOrderDate,
                     CustomerName,
                     w.ProductItem,
-                    nss.UpperLineSpeed_Min,
+                    (nss.{upper_column}+nss.{lower_column})/2 LineSpeedStd,
                     m.COUNTING_MACHINE,
                     w.PartNo,
                     w.AQL,
@@ -230,7 +247,7 @@ class mes_daily_report(object):
                     JOIN [PMGMES].[dbo].[PMG_DML_DataModelList] dl ON w.MachineId = dl.Id
                     JOIN [PMGMES].[dbo].[PMG_MES_RunCard] r ON r.WorkOrderId = w.Id AND r.LineName = wi.LineId
                     JOIN [PMGMES].[dbo].[PMG_MES_IPQCInspectingRecord] ipqc ON ipqc.RunCardId = r.Id
-                    LEFT JOIN [PMGMES].[dbo].[PMG_MES_NBR_SCADA_Std] nss ON nss.ProductItem = w.ProductItem
+                    LEFT JOIN {scada_table} nss ON nss.ProductItem = w.ProductItem
                     JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] m ON dl.Name = m.MES_MACHINE AND wi.LineId = m.LINE
                 WHERE 
                     wi.StartDate BETWEEN CONVERT(DATETIME, '{report_date1} 05:30:00', 120) AND CONVERT(DATETIME, '{report_date2} 05:29:59', 120)
@@ -247,8 +264,8 @@ class mes_daily_report(object):
                     [PMG_DEVICE].[dbo].[COUNTING_DATA] c
                     JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] m ON c.MachineName = m.counting_machine
                 WHERE 
-                    m.mes_machine LIKE '%NBR%'
-                    AND c.CreationTime BETWEEN CONVERT(DATETIME, '2024-09-01 06:00:00', 120) AND CONVERT(DATETIME, '2024-09-02 05:59:59', 120)
+                    m.mes_machine LIKE '%{plant}%'
+                    AND c.CreationTime BETWEEN CONVERT(DATETIME, '{report_date1} 06:00:00', 120) AND CONVERT(DATETIME, '{report_date2} 05:59:59', 120)
                     AND (c.speed < 60 OR c.speed IS NULL)
                 GROUP BY 
                     m.mes_machine,
@@ -272,9 +289,9 @@ class mes_daily_report(object):
                 wo.PlanQty,
                 wo.Qty,
                 wo.Status,
-                CAST(wo.UpperLineSpeed_Min AS INT) AS LineSpeed,
-                CAST((60 - COALESCE(cd.CountedValue, 0)) AS INT) AS ProductionTime,
-                CAST((60 - COALESCE(cd.CountedValue, 0)) * COALESCE(wo.UpperLineSpeed_Min, 0) AS INT) AS Output
+                CAST(wo.LineSpeedStd AS INT) AS LineSpeedStd,
+                60 AS ProductionTime,
+                CAST(60 * wo.LineSpeedStd AS INT) AS Target
             FROM 
                 WorkOrderInfo wo
                 LEFT JOIN CountingData cd ON wo.Name = cd.mes_machine AND wo.Line = cd.line AND wo.Period = cd.Period
@@ -343,6 +360,12 @@ class mes_daily_report(object):
         return workbook
 
     def generate_summary_excel(self, writer, df):
+
+        colmn_index = {'Name': 0, 'ProductItem': 1, 'AQL': 2, 'Shift': 3, 'Line': 4, 'max_speed': 5, 'min_speed': 6,
+                       'avg_speed': 7, 'LineSpeedStd': 8, 'ProductionTime': 9, 'sum_qty': 10, 'Target': 11}
+        colmn_letter = {'Name': 'A', 'ProductItem': 'B', 'AQL': 'C', 'Shift': 'D', 'Line': 'E',
+                       'max_speed': 'F', 'min_speed': 'G', 'avg_speed': 'H', 'LineSpeedStd': 'I', 'ProductionTime': 'J', 'sum_qty': 'K', 'Target': 'L'}
+
         # Create a bold font style
         bold_font = Font(bold=True)
 
@@ -366,13 +389,13 @@ class mes_daily_report(object):
             max_length = max(len(str(cell.value)) for cell in col)
 
             for cell in col:
-                if col_letter in ['A', 'B']:  # 检查是否为指定的列
+                if col_letter in [colmn_letter['Name'], colmn_letter['ProductItem']]:  # 检查是否为指定的列
                     worksheet.column_dimensions[col_letter].width = max_length + 5
 
-                if col_letter in ['F', 'G', 'H']:  # 检查是否为指定的列
+                if col_letter in [colmn_letter['max_speed'], colmn_letter['min_speed'], colmn_letter['avg_speed'], colmn_letter['LineSpeedStd'], colmn_letter['ProductionTime']]:  # 检查是否为指定的列
                     worksheet.column_dimensions[col_letter].width = 20
                     cell.alignment = self.right_align_style.alignment
-                elif col_letter in ['I']:
+                elif col_letter in [colmn_letter['sum_qty'], colmn_letter['Target']]:
                     worksheet.column_dimensions[col_letter].width = 20
                     cell.alignment = self.right_align_style.alignment
                     cell.number_format = '#,##0'
@@ -382,34 +405,36 @@ class mes_daily_report(object):
 
         # Search all lines, bold font and bold line above
         index_start = 2
-        index_end = 2
+        index_end = 1
         for row in worksheet.iter_rows(min_row=2, max_row=worksheet.max_row):
-            if row[4].value != '':  # Line
-                for cell in row[4:]:
+            if row[colmn_index['Line']].value != '':  # Line
+                for cell in row[colmn_index['Line']:]:
                     cell.fill = PatternFill(start_color="FDE9D9", end_color="FDE9D9", fill_type="solid")
 
 
-            if row[3].value != '':  # Shift
-                # Line
-                worksheet.row_dimensions.group(index_start, index_end-1, hidden=True, outline_level=2)
+            if row[colmn_index['ProductItem']].value != '' and row[colmn_index['Shift']].value == '':
+                index_end += 1
 
-                worksheet.row_dimensions.group(index_end, index_end, hidden=True, outline_level=1)
+            if row[colmn_index['Shift']].value != '': # Shift
+                worksheet.row_dimensions.group(index_start, index_end, hidden=True, outline_level=2)
+
+                index_start = index_end + 1
+                index_end = index_end + 1
+                worksheet.row_dimensions.group(index_start, index_end, hidden=True, outline_level=1)
                 index_start = index_end + 1
 
-                for cell in row[3:]:
+                for cell in row[colmn_index['Shift']:]:
                     cell.font = bold_font
                     cell.border = Border(top=Side(style='thin'))
 
-            elif row[0].value != '':  # Machine
+            elif row[colmn_index['Name']].value != '':  # Machine
                 # Hide detailed data
+                worksheet.row_dimensions.group(index_start, index_end, hidden=False, outline_level=0)
                 index_start = index_end + 1
-                worksheet.row_dimensions.group(index_start, index_end, hidden=True, outline_level=0)
 
                 for cell in row:
                     cell.font = bold_font
                     cell.border = thick_border
-
-            index_end += 1
 
         return workbook
 
@@ -436,21 +461,35 @@ class mes_daily_report(object):
 
                 tmp_rows = []
                 for line_name, line_group in line_grouped:
-                    subtotal = {
+                    # line_sum_df = line_group.groupby(['Name', 'Shift', 'Line']).agg({
+                    #     'min_speed': 'min',  # Min speed
+                    #     'max_speed': 'max',  # Max speed
+                    #     'avg_speed': 'mean',  # Average speed
+                    #     'sum_qty': 'sum',
+                    #     'ProductionTime': 'sum',
+                    #     'UpperLineSpeed': 'mean',
+                    #     'Target': 'sum',
+                    # }).reset_index()
+                    #
+                    # # Add AQL Column to fit format
+                    # line_sum_df.insert(line_sum_df.columns.get_loc('Name') + 1, 'ProductItem', None)
+                    # line_sum_df.insert(line_sum_df.columns.get_loc('Name') + 2, 'AQL', None)
+
+                    line_sum = {
                         'Name': '',
                         'ProductItem': join_values(line_group['ProductItem']),
                         'AQL': join_values(line_group['AQL']),
                         'Shift': join_values(line_group['Shift']),
-                        'Line': '',
+                        'Line': join_values(line_group['Line']),
                         'max_speed': line_group['max_speed'].max(),
                         'min_speed': line_group['min_speed'].min(),
                         'avg_speed': line_group['avg_speed'].mean(),
-                        'sum_qty': line_group['sum_qty'].sum(),
+                        'LineSpeedStd': line_group['LineSpeedStd'].mean(),
                         'ProductionTime': line_group['ProductionTime'].sum(),
-                        'LineSpeed': line_group['LineSpeed'].mean(),
-                        'Output': line_group['Output'].sum(),
+                        'sum_qty': line_group['sum_qty'].sum(),
+                        'Target': line_group['Target'].sum(),
                     }
-                    line_sum_df = pd.DataFrame([subtotal])
+                    line_sum_df = pd.DataFrame([line_sum])
 
                     tmp_rows.append(line_sum_df)
 
@@ -461,22 +500,22 @@ class mes_daily_report(object):
                 day_df = df_tmp[df_tmp['Shift'] == '早班'].copy()
                 subtotal = {
                     'Name': '',
-                    'ProductItem': join_values(day_df['ProductItem']),
-                    'AQL': join_values(day_df['AQL']),
+                    'ProductItem': '',
+                    'AQL': '',
                     'Shift': join_values(day_df['Shift']),
                     'Line': '',
                     'max_speed': day_df['max_speed'].max(),
                     'min_speed': day_df['min_speed'].min(),
                     'avg_speed': day_df['avg_speed'].mean(),
-                    'sum_qty': day_df['sum_qty'].sum(),
+                    'LineSpeedStd': day_df['LineSpeedStd'].mean(),
                     'ProductionTime': day_df['ProductionTime'].sum(),
-                    'LineSpeed': day_df['LineSpeed'].mean(),
-                    'Output': day_df['Output'].sum(),
+                    'sum_qty': day_df['sum_qty'].sum(),
+                    'Target': day_df['Target'].sum(),
                 }
                 subtotal_df = pd.DataFrame([subtotal])
                 subtotal_df['avg_speed'] = subtotal_df['avg_speed'].round(0)
 
-                day_df[['Name', 'ProductItem', 'AQL', 'Shift']] = ''
+                day_df[['Name', 'Shift']] = ''
                 day_df['avg_speed'] = day_df['avg_speed'].round(0)
                 if not day_df.empty:
                     rows.append(day_df)  # Day row data
@@ -493,15 +532,15 @@ class mes_daily_report(object):
                     'max_speed': night_df['max_speed'].max(),
                     'min_speed': night_df['min_speed'].min(),
                     'avg_speed': night_df['avg_speed'].mean(),
-                    'sum_qty': night_df['sum_qty'].sum(),
+                    'LineSpeedStd': night_df['LineSpeedStd'].mean(),
                     'ProductionTime': night_df['ProductionTime'].sum(),
-                    'LineSpeed': night_df['LineSpeed'].mean(),
-                    'Output': night_df['Output'].sum(),
+                    'sum_qty': night_df['sum_qty'].sum(),
+                    'Target': night_df['Target'].sum(),
                 }
                 subtotal_df = pd.DataFrame([subtotal])
                 subtotal_df['avg_speed'] = subtotal_df['avg_speed'].round(0)
 
-                night_df[['Name', 'ProductItem', 'AQL', 'Shift']] = ''
+                night_df[['Name', 'Shift']] = ''
                 night_df['avg_speed'] = night_df['avg_speed'].round(0)
                 if not night_df.empty:
                     rows.append(night_df)  # Night row data
@@ -517,10 +556,10 @@ class mes_daily_report(object):
                     'max_speed': mach_group['max_speed'].max(),
                     'min_speed': mach_group['min_speed'].min(),
                     'avg_speed': mach_group['avg_speed'].mean(),
-                    'sum_qty': mach_group['sum_qty'].sum(),
+                    'LineSpeedStd': mach_group['LineSpeedStd'].mean(),
                     'ProductionTime': mach_group['ProductionTime'].sum(),
-                    'LineSpeed': mach_group['LineSpeed'].mean(),
-                    'Output': mach_group['Output'].sum(),
+                    'sum_qty': mach_group['sum_qty'].sum(),
+                    'Target': mach_group['Target'].sum(),
                 }
                 subtotal_df = pd.DataFrame([subtotal])
                 subtotal_df['avg_speed'] = subtotal_df['avg_speed'].round(0)
@@ -540,9 +579,9 @@ class mes_daily_report(object):
                 'min_speed': '車速(最低)',
                 'avg_speed': '車速(平均)',
                 'sum_qty': '產量(加總)',
-                'ProductionTime': '生產時間',
-                'LineSpeed': '線速',
-                'Output': '產量'
+                'ProductionTime': '預計生產時間',
+                'LineSpeedStd': '標準車速',
+                'Target': '目標產能'
             }, inplace=True)
 
             # Group the total quantity of each machine into a DataFrame
@@ -555,31 +594,48 @@ class mes_daily_report(object):
 
     def generate_chart(self, save_path, plant, report_date, df_chart):
         # Create Chart
-        fig, ax1 = plt.subplots()
+        fig, ax1 = plt.subplots(figsize=(10, 6))
 
         # Only substring Name right 3 characters
         df_chart['Name_short'] = df_chart['Name'].apply(lambda x: x[-3:])
 
-        # Draw Bar Chart
-        bars = ax1.bar(df_chart['Name_short'], df_chart['sum_qty'])
+        df_chart['Unfinished'] = (df_chart['Target'] - df_chart['sum_qty']).apply(lambda x: max(x, 0))  # 未達成數量, 負數為0
+        df_chart['Achievement Rate'] = df_chart['sum_qty'] / df_chart['Target'] * 100  # 達成率（百分比）
+        df_chart.loc[df_chart['Target'] == 0, 'Achievement Rate'] = None  # 當 Target 為 0，將達成率設為 None
 
-        # Display quantity above each bar
-        for bar in bars:
-            yval = bar.get_height()  # 获取条形的高度，也就是数量
-            ax1.text(bar.get_x() + bar.get_width() / 2, yval, f'{int(yval):,}',
-                     ha='center', va='bottom')  # 显示数量并居中
+        # Draw Bar Chart
+        bar_width = 0.6
+        bars = ax1.bar(df_chart['Name_short'], df_chart['sum_qty'], width=bar_width, color='lightgreen')
+        ax1.bar(df_chart['Name_short'], df_chart['Unfinished'], width=bar_width, bottom=df_chart['sum_qty'], color='lightcoral')
 
         # Create a second Y axis
-        ax2 = ax1.twinx()
+        # ax2 = ax1.twinx()
 
         # Draw Line Chart (speed)
-        ax2.plot(df_chart['Name_short'], df_chart['avg_speed'], color='red', marker='o')
-
+        # ax2.plot(df_chart['Name_short'], df_chart['Achievement Rate'], color='red', marker='o')
+        # ax2.set_ylabel('Achievement Rate (%)', color='red')
 
         # Set the X-axis label and the Y-axis label
         ax1.set_xlabel('Machine')
         ax1.set_ylabel('Output')
-        ax2.set_ylabel('Average Speed', color='red')
+
+        # 自定義 Y 軸以 10 萬為單位
+        def y_formatter(x, pos):
+            return f'{int(x/10000)}W'  # 將數值轉換為「萬」的單位顯示
+
+        ax1.yaxis.set_major_formatter(FuncFormatter(y_formatter))
+
+        # 設置 Y 軸的上限值，留出額外空間
+        max_y = df_chart['sum_qty'].max() + df_chart['Unfinished'].max()  # 計算長條圖的最大總高度
+        ax1.set_ylim(0, max_y * 1.1)  # 設置 Y 軸上限為最大總高度的 110%
+
+        # 在每個長條圖上方顯示達成率百分比
+        for bar, unfinished, rate in zip(bars, df_chart['Unfinished'], df_chart['Achievement Rate']):
+            if pd.notnull(rate):  # 僅顯示達成率不為 None 的數值
+                height = bar.get_height() + unfinished  # 計算長條的總高度
+                ax1.text(bar.get_x() + bar.get_width() / 2, height + 20000, f'{rate:.1f}%', ha='center', va='bottom',
+                         fontsize=10)
+
         plt.title(f'{plant} Sum Quantity per Machine')
 
         # Display the legend of the bar chart and line chart together
@@ -599,6 +655,52 @@ class mes_daily_report(object):
 
         return image_stream
 
+    # def generate_chart(self, save_path, plant, report_date, df_chart):
+    #     # Create Chart
+    #     fig, ax1 = plt.subplots()
+    #
+    #     # Only substring Name right 3 characters
+    #     df_chart['Name_short'] = df_chart['Name'].apply(lambda x: x[-3:])
+    #
+    #     # Draw Bar Chart
+    #     bars = ax1.bar(df_chart['Name_short'], df_chart['sum_qty'])
+    #
+    #     # Display quantity above each bar
+    #     for bar in bars:
+    #         yval = bar.get_height()  # 获取条形的高度，也就是数量
+    #         ax1.text(bar.get_x() + bar.get_width() / 2, yval, f'{int(yval):,}',
+    #                  ha='center', va='bottom')  # 显示数量并居中
+    #
+    #     # Create a second Y axis
+    #     ax2 = ax1.twinx()
+    #
+    #     # Draw Line Chart (speed)
+    #     ax2.plot(df_chart['Name_short'], df_chart['avg_speed'], color='red', marker='o')
+    #
+    #
+    #     # Set the X-axis label and the Y-axis label
+    #     ax1.set_xlabel('Machine')
+    #     ax1.set_ylabel('Output')
+    #     ax2.set_ylabel('Average Speed', color='red')
+    #     plt.title(f'{plant} Sum Quantity per Machine')
+    #
+    #     # Display the legend of the bar chart and line chart together
+    #     fig.legend(loc="upper right", bbox_to_anchor=(1, 1), bbox_transform=ax1.transAxes)
+    #
+    #     # Save the image to a local file
+    #     image_file = f'{plant}_bar_chart_{report_date}.png'
+    #     image_file = os.path.join(save_path, image_file)
+    #
+    #     plt.savefig(image_file)
+    #
+    #     # Save the image to a BytesIO object
+    #     image_stream = BytesIO()
+    #     plt.savefig(image_stream, format='png')
+    #     image_stream.seek(0)  # Move the pointer to the beginning of the file
+    #     plt.close()  # Close the image to free up memory
+    #
+    #     return image_stream
+
 from datetime import datetime, timedelta
 report_date1 = datetime.today() - timedelta(days=1)
 report_date1 = report_date1.strftime('%Y%m%d')
@@ -606,8 +708,8 @@ report_date1 = report_date1.strftime('%Y%m%d')
 report_date2 = datetime.today()
 report_date2 = report_date2.strftime('%Y%m%d')
 
-report_date1 = "20240914"
-report_date2 = "20240915"
+# report_date1 = "20240917"
+# report_date2 = "20240918"
 
 report = mes_daily_report(report_date1, report_date2)
 report.main()
