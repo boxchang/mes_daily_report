@@ -18,7 +18,7 @@ from openpyxl.styles import Alignment, NamedStyle, Font, Border, Side, PatternFi
 import matplotlib.pyplot as plt
 from io import BytesIO
 import logging
-
+import time
 
 class mes_daily_report(object):
     report_date1 = ""
@@ -217,7 +217,22 @@ class mes_daily_report(object):
             image_buffers.append(image_buffer)
 
         # Send Email
-        self.send_email(file_list, image_buffers, report_date1)
+        max_reSend = 5
+        reSent = 0
+        while reSent<max_reSend:
+            try:
+                self.send_email(file_list, image_buffers, report_date1)
+                print('Email sent successfully')
+                break
+            except Exception as e:
+                print(f'Email sending failed: {e}')
+                reSent += 1
+                if reSent >= max_reSend:
+                    print('Failed to send email after 5 retries')
+                    break
+                time.sleep(180) #seconds
+
+            
 
     def shift(self, period):
         try:
