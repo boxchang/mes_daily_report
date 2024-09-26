@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 import logging
 import time
+from openpyxl.comments import Comment
 
 class mes_daily_report(object):
     report_date1 = ""
@@ -49,6 +50,9 @@ class mes_daily_report(object):
             'Scrap': '廢品%',
             'SecondGrade': '二級品%',
             'OverControl': '超內控%',
+            'WeightValue': 'IPQC克重',
+            'WeightLower': '重量下限',
+            'WeightUpper': '重量上限'
         }
 
     # 配置日志记录器
@@ -195,7 +199,7 @@ class mes_daily_report(object):
 
                 df_final['Period'] = df_final['Period'].astype(str).str.zfill(2) + ":00"
 
-                df_selected = df_final[['Date', 'Name', 'Line', 'Shift', 'WorkOrderId', 'PartNo', 'ProductItem', 'AQL', 'ProductionTime', 'Period', 'max_speed', 'min_speed', 'avg_speed', 'LineSpeedStd', 'sum_qty', 'Separate', 'Target', 'Scrap', 'SecondGrade', 'OverControl']]
+                df_selected = df_final[['Date', 'Name', 'Line', 'Shift', 'WorkOrderId', 'PartNo', 'ProductItem', 'AQL', 'ProductionTime', 'Period', 'max_speed', 'min_speed', 'avg_speed', 'LineSpeedStd', 'sum_qty', 'Separate', 'Target', 'Scrap', 'SecondGrade', 'OverControl', 'WeightValue', 'WeightLower', 'WeightUpper']]
 
                 df_with_subtotals, df_chart = self.sorting_data(df_selected)
                 self.generate_summary_excel(writer, df_with_subtotals)
@@ -279,6 +283,9 @@ class mes_daily_report(object):
                     wi.Qty,
                     w.Status,
                     ipqc.InspectionStatus weight_result,
+                    ipqc.InspectionValue weight_value,
+					ipqc.Lower_InspectionValue weight_lower,
+					ipqc.Upper_InspectionValue weight_upper,
 					hole.InspectionStatus hole_result,
 					r.Id runcard
                 FROM 
@@ -288,7 +295,7 @@ class mes_daily_report(object):
                     JOIN [PMGMES].[dbo].[PMG_MES_RunCard] r ON r.WorkOrderId = w.Id AND r.LineName = wi.LineId
                     JOIN [PMGMES].[dbo].[PMG_MES_IPQCInspectingRecord] ipqc ON ipqc.RunCardId = r.Id
                     LEFT JOIN [PMGMES].[dbo].[PMG_MES_IPQCInspectingRecord] hole ON hole.RunCardId = r.Id and hole.OptionName = 'Pinhole'
-                    LEFT JOIN {scada_table} nss ON nss.ProductItem = w.ProductItem
+                    LEFT JOIN {scada_table} nss ON nss.PartNo = w.PartNo
                     JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] m ON dl.Name = m.MES_MACHINE AND wi.LineId = m.LINE
                 WHERE 
                     ((r.InspectionDate = '{report_date1}' AND Period between 6 and 23) or (r.InspectionDate = '{report_date2}' AND Period between 0 and 5))
@@ -315,7 +322,10 @@ class mes_daily_report(object):
                     m.line
             ),
 			Machines as (
-				SELECT * FROM [PMGMES].[dbo].[PMG_DML_DataModelList] WHERE DataModelTypeId = 'DMT000003' and Name like '%{plant}%'
+				select distinct MES_MACHINE Name from [PMG_DEVICE].[dbo].[COUNTING_DATA] c
+                    join [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] m on c.MachineName = m.COUNTING_MACHINE
+                    where creationTime between CONVERT(DATETIME, '{report_date1} 06:00:00', 120) AND CONVERT(DATETIME, '{report_date2} 05:59:59', 120)
+                    and m.MES_MACHINE like '%{plant}%'
 			)
             SELECT 
                 wo.MachineId,
@@ -340,6 +350,9 @@ class mes_daily_report(object):
                 '' SecondGrade,
                 CAST(60 * wo.LineSpeedStd AS INT) AS Target,
                 weight_result OverControl,
+                CAST(round(weight_value,2) AS DECIMAL(10, 2)) WeightValue,
+				CAST(round(weight_lower,2) AS DECIMAL(10, 2)) WeightLower,
+				CAST(round(weight_upper,2) AS DECIMAL(10, 2)) WeightUpper,
                 runcard
                 
             FROM 
@@ -378,7 +391,7 @@ class mes_daily_report(object):
 
     def generate_excel(self, writer, df, plant, machine_name):
         # 轉出Excel前進行資料處理
-        df['ProductionTime'] = (df['ProductionTime'] // 60).astype(str) + ' 小時'
+        df['ProductionTime'] = (df['ProductionTime'] // 60).astype(str) + 'H'
         # Change column names
         df.rename(columns=self.header_columns, inplace=True)
 
@@ -413,6 +426,20 @@ class mes_daily_report(object):
                 else:
                     cell.alignment = self.center_align_style.alignment
 
+        worksheet[f'V1'].value = None  # 清空克重下限欄位
+        worksheet[f'W1'].value = None  # 清空克重上限欄位
+        for row in range(2, worksheet.max_row + 1):  # 從第2行開始，因為第1行是標題
+            weight_value_cell = worksheet[f'U{row}']
+            weight_lower_cell = worksheet[f'V{row}'].value
+            weight_upper_cell = worksheet[f'W{row}'].value
+
+            if weight_lower_cell or weight_upper_cell:
+                comment = Comment(text="IPQC範圍("+weight_lower_cell+"-"+weight_upper_cell+")", author="System")  # 創建註解
+                weight_value_cell.comment = comment
+
+            worksheet[f'V{row}'].value = None  # 清空克重下限欄位
+            worksheet[f'W{row}'].value = None  # 清空克重上限欄位
+
         return workbook
 
     def generate_summary_excel(self, writer, df):
@@ -445,10 +472,13 @@ class mes_daily_report(object):
             max_length = max(len(str(cell.value)) for cell in col)
 
             for cell in col:
-                if col_letter in [colmn_letter['Name'], colmn_letter['ProductItem']]:  # 检查是否为指定的列
+                if col_letter in [colmn_letter['Name']]:  # 检查是否为指定的列
                     worksheet.column_dimensions[col_letter].width = max_length + 5
-
-                if col_letter in [colmn_letter['max_speed'], colmn_letter['min_speed'], colmn_letter['avg_speed'], colmn_letter['LineSpeedStd']]:  # 检查是否为指定的列
+                elif col_letter in [colmn_letter['ProductItem']]:
+                    worksheet.column_dimensions[col_letter].width = max_length + 5
+                    self.left_align_style = Alignment(horizontal='left')
+                    cell.alignment = self.left_align_style
+                elif col_letter in [colmn_letter['max_speed'], colmn_letter['min_speed'], colmn_letter['avg_speed'], colmn_letter['LineSpeedStd']]:  # 检查是否为指定的列
                     worksheet.column_dimensions[col_letter].width = 15
                     cell.alignment = self.right_align_style.alignment
                 elif col_letter in [colmn_letter['ProductionTime']]:
@@ -717,7 +747,7 @@ class mes_daily_report(object):
             df_with_subtotals = pd.concat(rows, ignore_index=True)
 
             # ProductionTime加上小時的文字
-            df_with_subtotals['ProductionTime'] = df_with_subtotals['ProductionTime'].astype(str) + ' 小時'
+            df_with_subtotals['ProductionTime'] = df_with_subtotals['ProductionTime'].astype(str) + 'H'
             # Change column names
             df_with_subtotals.rename(columns=self.header_columns, inplace=True)
 
@@ -845,8 +875,8 @@ report_date1 = report_date1.strftime('%Y%m%d')
 report_date2 = datetime.today()
 report_date2 = report_date2.strftime('%Y%m%d')
 
-# report_date1 = "20240917"
-# report_date2 = "20240918"
+# report_date1 = "20240921"
+# report_date2 = "20240922"
 
 report = mes_daily_report(report_date1, report_date2)
 report.main()
