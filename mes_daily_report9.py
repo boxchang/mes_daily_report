@@ -3,7 +3,8 @@ import os
 import numpy as np
 from matplotlib.ticker import FuncFormatter
 from openpyxl.utils import get_column_letter
-from database import mes_database
+from database import mes_database, mes_olap_database
+
 curPath = os.path.abspath(os.path.dirname(__file__))
 rootPath = os.path.split(curPath)[0]
 sys.path.append(rootPath)
@@ -220,6 +221,9 @@ class mes_daily_report(object):
             image_buffer = self.generate_chart(save_path, plant, report_date1, df_chart)
             image_buffers.append(image_buffer)
 
+            #self.delete_mes_olap(report_date1)
+            #self.insert_mes_olap(df_selected)
+
         # Send Email
         max_reSend = 5
         reSent = 0
@@ -236,7 +240,43 @@ class mes_daily_report(object):
                     break
                 time.sleep(180) #seconds
 
-            
+    def insert_mes_olap(self, df):
+        df = df.replace({np.nan: 'null'})
+        db = mes_olap_database()
+        table_name = '[MES_OLAP].[dbo].[mes_daily_report_raw]'
+        for index, row in df.iterrows():
+            Date = row['Date']
+            Name = row['Name']
+            Line = row['Line']
+            Shift = row['Shift']
+            WorkOrderId = row['WorkOrderId']
+            PartNo = row['PartNo']
+            ProductItem = row['ProductItem']
+            AQL = row['AQL']
+            ProductionTime = row['ProductionTime']
+            Period = row['Period']
+            max_speed = row['max_speed']
+            min_speed = row['min_speed']
+            avg_speed = row['avg_speed']
+            LineSpeedStd = row['LineSpeedStd']
+            sum_qty = row['sum_qty']
+            Separate = row['Separate']
+            Target = row['Target']
+            Scrap = row['Scrap']
+            SecondGrade = row['SecondGrade']
+            OverControl = row['OverControl']
+            WeightValue = row['WeightValue']
+            WeightLower = row['WeightLower']
+            WeightUpper = row['WeightUpper']
+
+            sql = f"""insert into {table_name}(Date,Name,Line,Shift,WorkOrderId,PartNo,ProductItem,AQL,ProductionTime,
+            Period,max_speed,min_speed,avg_speed,LineSpeedStd,sum_qty,Separate,Target,Scrap,SecondGrade,OverControl,
+            WeightValue,WeightLower,WeightUpper) Values('{Date}','{Name}','{Line}',N'{Shift}','{WorkOrderId}','{PartNo}',
+            '{ProductItem}','{AQL}',{ProductionTime},'{Period}',{max_speed},{min_speed},{avg_speed},{LineSpeedStd},
+            {sum_qty},'{Separate}',{Target},'{Scrap}','{SecondGrade}','{OverControl}',{WeightValue},{WeightLower},{WeightUpper})"""
+            # print(sql)
+            db.execute_sql(sql)
+
 
     def shift(self, period):
         try:
@@ -421,8 +461,16 @@ class mes_daily_report(object):
 
             # Set alignment
             for cell in col:
-                if col_letter in ['J', 'K', 'L', 'M', 'N']:  # Apply right alignment for specific columns
+                if col_letter in ['K', 'L', 'M', 'N']:  # Apply right alignment for specific columns
                     cell.alignment = self.right_align_style.alignment
+                elif col_letter in ['O', 'Q']:
+                    cell.number_format = '#,##0'
+                    cell.alignment = self.center_align_style.alignment
+                elif col_letter in ['U']:
+                    try:
+                        cell.value = float(cell.value)
+                    except ValueError:
+                        pass
                 else:
                     cell.alignment = self.center_align_style.alignment
 
