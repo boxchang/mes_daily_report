@@ -149,23 +149,23 @@ class mes_daily_report(object):
         logging.info(f"Attached Picture")
 
         # Send Email
-        try:
-            # server = smtplib.SMTP(smtp_server, smtp_port)
-            # server.starttls()  # 启用 TLS 加密
-            # server.login(smtp_user, smtp_password)  # 登录到 SMTP 服务器
-            # server.sendmail(smtp_user, to_emails, msg.as_string())
-            # server.quit()
-
-            # 發送郵件（不進行密碼驗證）
-            server = smtplib.SMTP(smtp_server, smtp_port)
-            server.ehlo()  # 啟動與伺服器的對話
-            server.sendmail(smtp_user, to_emails, msg.as_string())
-            print("Sent Email Successfully")
-        except Exception as e:
-            print(f"Sent Email Fail: {e}")
-            logging.info(f"Sent Email Fail: {e}")
-        finally:
-            attachment.close()
+        # try:
+        #     # server = smtplib.SMTP(smtp_server, smtp_port)
+        #     # server.starttls()  # 启用 TLS 加密
+        #     # server.login(smtp_user, smtp_password)  # 登录到 SMTP 服务器
+        #     # server.sendmail(smtp_user, to_emails, msg.as_string())
+        #     # server.quit()
+        #
+        #     # 發送郵件（不進行密碼驗證）
+        #     server = smtplib.SMTP(smtp_server, smtp_port)
+        #     server.ehlo()  # 啟動與伺服器的對話
+        #     server.sendmail(smtp_user, to_emails, msg.as_string())
+        #     print("Sent Email Successfully")
+        # except Exception as e:
+        #     print(f"Sent Email Fail: {e}")
+        #     logging.info(f"Sent Email Fail: {e}")
+        # finally:
+        #     attachment.close()
 
     def main(self):
         report_date1 = self.report_date1
@@ -221,24 +221,35 @@ class mes_daily_report(object):
             image_buffer = self.generate_chart(save_path, plant, report_date1, df_chart)
             image_buffers.append(image_buffer)
 
-            #self.delete_mes_olap(report_date1)
-            #self.insert_mes_olap(df_selected)
+            self.delete_mes_olap(report_date1, report_date2)
+            self.insert_mes_olap(df_selected)
 
         # Send Email
         max_reSend = 5
         reSent = 0
-        while reSent<max_reSend:
-            try:
-                self.send_email(file_list, image_buffers, report_date1)
-                print('Email sent successfully')
-                break
-            except Exception as e:
-                print(f'Email sending failed: {e}')
-                reSent += 1
-                if reSent >= max_reSend:
-                    print('Failed to send email after 5 retries')
-                    break
-                time.sleep(180) #seconds
+        # while reSent<max_reSend:
+        #     try:
+        #         self.send_email(file_list, image_buffers, report_date1)
+        #         print('Email sent successfully')
+        #         break
+        #     except Exception as e:
+        #         print(f'Email sending failed: {e}')
+        #         reSent += 1
+        #         if reSent >= max_reSend:
+        #             print('Failed to send email after 5 retries')
+        #             break
+        #         time.sleep(180) #seconds
+    def delete_mes_olap(self,report_date1,report_date2):
+        db = mes_olap_database()
+        table_name = '[MES_OLAP].[dbo].[mes_daily_report_raw]'
+        sql_delete = f"""
+            delete
+            from {table_name}
+            WHERE ((date = '{report_date2}' AND period BETWEEN '00:00' AND '05:00')
+            OR (date = '{report_date1}' AND period BETWEEN '06:00' AND '23:00'))
+        """
+        db.execute_sql(sql_delete)
+
 
     def insert_mes_olap(self, df):
         df = df.replace({np.nan: 'null'})
@@ -271,9 +282,9 @@ class mes_daily_report(object):
 
             sql = f"""insert into {table_name}(Date,Name,Line,Shift,WorkOrderId,PartNo,ProductItem,AQL,ProductionTime,
             Period,max_speed,min_speed,avg_speed,LineSpeedStd,sum_qty,Separate,Target,Scrap,SecondGrade,OverControl,
-            WeightValue,WeightLower,WeightUpper) Values('{Date}','{Name}','{Line}',N'{Shift}','{WorkOrderId}','{PartNo}',
+            WeightValue,WeightLower,WeightUpper, update_time) Values('{Date}','{Name}','{Line}',N'{Shift}','{WorkOrderId}','{PartNo}',
             '{ProductItem}','{AQL}',{ProductionTime},'{Period}',{max_speed},{min_speed},{avg_speed},{LineSpeedStd},
-            {sum_qty},'{Separate}',{Target},'{Scrap}','{SecondGrade}','{OverControl}',{WeightValue},{WeightLower},{WeightUpper})"""
+            {sum_qty},'{Separate}',{Target},'{Scrap}','{SecondGrade}','{OverControl}',{WeightValue},{WeightLower},{WeightUpper}, GETDATE())"""
             # print(sql)
             db.execute_sql(sql)
 
@@ -923,8 +934,8 @@ report_date1 = report_date1.strftime('%Y%m%d')
 report_date2 = datetime.today()
 report_date2 = report_date2.strftime('%Y%m%d')
 
-# report_date1 = "20240921"
-# report_date2 = "20240922"
+# report_date1 = "2024-09-26"
+# report_date2 = "2024-09-27"
 
 report = mes_daily_report(report_date1, report_date2)
 report.main()
