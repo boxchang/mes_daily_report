@@ -149,23 +149,23 @@ class mes_daily_report(object):
         logging.info(f"Attached Picture")
 
         # Send Email
-        # try:
-        #     # server = smtplib.SMTP(smtp_server, smtp_port)
-        #     # server.starttls()  # 启用 TLS 加密
-        #     # server.login(smtp_user, smtp_password)  # 登录到 SMTP 服务器
-        #     # server.sendmail(smtp_user, to_emails, msg.as_string())
-        #     # server.quit()
-        #
-        #     # 發送郵件（不進行密碼驗證）
-        #     server = smtplib.SMTP(smtp_server, smtp_port)
-        #     server.ehlo()  # 啟動與伺服器的對話
-        #     server.sendmail(smtp_user, to_emails, msg.as_string())
-        #     print("Sent Email Successfully")
-        # except Exception as e:
-        #     print(f"Sent Email Fail: {e}")
-        #     logging.info(f"Sent Email Fail: {e}")
-        # finally:
-        #     attachment.close()
+        try:
+            # server = smtplib.SMTP(smtp_server, smtp_port)
+            # server.starttls()  # 启用 TLS 加密
+            # server.login(smtp_user, smtp_password)  # 登录到 SMTP 服务器
+            # server.sendmail(smtp_user, to_emails, msg.as_string())
+            # server.quit()
+
+            # 發送郵件（不進行密碼驗證）
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.ehlo()  # 啟動與伺服器的對話
+            server.sendmail(smtp_user, to_emails, msg.as_string())
+            print("Sent Email Successfully")
+        except Exception as e:
+            print(f"Sent Email Fail: {e}")
+            logging.info(f"Sent Email Fail: {e}")
+        finally:
+            attachment.close()
 
     def main(self):
         report_date1 = self.report_date1
