@@ -231,12 +231,15 @@ class mes_daily_report(object):
             try:
                 self.send_email(file_list, image_buffers, report_date1)
                 print('Email sent successfully')
+                logging.info(f"Email sent successfully")
                 break
             except Exception as e:
                 print(f'Email sending failed: {e}')
+                logging.info(f"Email sending failed: {e}")
                 reSent += 1
                 if reSent >= max_reSend:
                     print('Failed to send email after 5 retries')
+                    logging.info(f"Failed to send email after 5 retries")
                     break
                 time.sleep(180) #seconds
     def delete_mes_olap(self,report_date1,report_date2):
