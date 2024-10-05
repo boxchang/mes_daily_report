@@ -221,7 +221,7 @@ class mes_daily_report(object):
             image_buffer = self.generate_chart(save_path, plant, report_date1, df_chart)
             image_buffers.append(image_buffer)
 
-            self.delete_mes_olap(report_date1, report_date2)
+            self.delete_mes_olap(report_date1, report_date2, plant)
             self.insert_mes_olap(df_selected)
 
         # Send Email
@@ -242,13 +242,13 @@ class mes_daily_report(object):
                     logging.info(f"Failed to send email after 5 retries")
                     break
                 time.sleep(180) #seconds
-    def delete_mes_olap(self,report_date1,report_date2):
+    def delete_mes_olap(self,report_date1,report_date2, plant):
         db = mes_olap_database()
         table_name = '[MES_OLAP].[dbo].[mes_daily_report_raw]'
         sql_delete = f"""
             delete
             from {table_name}
-            WHERE ((date = '{report_date2}' AND period BETWEEN '00:00' AND '05:00')
+            WHERE Name like '%{plant}%' and ((date = '{report_date2}' AND period BETWEEN '00:00' AND '05:00')
             OR (date = '{report_date1}' AND period BETWEEN '06:00' AND '23:00'))
         """
         db.execute_sql(sql_delete)
