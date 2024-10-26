@@ -193,46 +193,42 @@ class mes_daily_report(object):
             # Create Excel file
             file_name = f'MES_{plant}_DAILY_Report_{report_date1}.xlsx'
             excel_file = os.path.join(save_path, file_name)
+            try:
+                df_main = self.get_df_main(db, report_date1, report_date2, plant)
 
-            with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
-                try:
-                    df_main = self.get_df_main(db, report_date1, report_date2, plant)
+                df_detail = self.get_df_detail(db, report_date1, report_date2, plant)
 
-                    df_detail = self.get_df_detail(db, report_date1, report_date2, plant)
+                df_final = pd.merge(df_main, df_detail, on=['Name', 'Period', 'Line'], how='left')
 
-                    df_final = pd.merge(df_main, df_detail, on=['Name', 'Period', 'Line'], how='left')
+                df_activation = self.get_df_activation(db, report_date1, report_date2, plant)
 
-                    df_activation = self.get_df_activation(db, report_date1, report_date2, plant)
+                df_final = pd.merge(df_final, df_activation, on=['Name', 'Period'], how='left')
 
-                    df_final = pd.merge(df_final, df_activation, on=['Name', 'Period'], how='left')
+                df_selected = df_final[['Date', 'Name', 'Line', 'Shift', 'WorkOrderId', 'PartNo', 'ProductItem', 'AQL', 'ProductionTime', 'Period', 'max_speed', 'min_speed', 'avg_speed', 'LineSpeedStd', 'sum_qty', 'Separate', 'Target', 'Scrap', 'SecondGrade', 'OverControl', 'WeightValue', 'OpticalNGRate', 'WeightLower', 'WeightUpper', 'Activation']]
 
-                    df_final['Period'] = df_final['Period'].astype(str).str.zfill(2) + ":00"
+                df_with_subtotals, df_chart = self.sorting_data(db, df_selected)
+                if not fix_mode:
+                    with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
+                        self.generate_summary_excel(writer, df_with_subtotals)
 
-                    df_selected = df_final[['Date', 'Name', 'Line', 'Shift', 'WorkOrderId', 'PartNo', 'ProductItem', 'AQL', 'ProductionTime', 'Period', 'max_speed', 'min_speed', 'avg_speed', 'LineSpeedStd', 'sum_qty', 'Separate', 'Target', 'Scrap', 'SecondGrade', 'OverControl', 'WeightValue', 'OpticalNGRate', 'WeightLower', 'WeightUpper', 'Activation']]
+                        machine_groups = df_selected.groupby('Name')
+                        for machine_name, machine_df in machine_groups:
+                            # 處理停機情況
+                            if not machine_df['ProductItem'].iloc[0]:
+                                continue
 
-                    df_with_subtotals, df_chart = self.sorting_data(db, df_selected)
-                    self.generate_summary_excel(writer, df_with_subtotals)
+                            machine_df = machine_df.sort_values(by=['Date', 'Shift', 'Period'])
+                            self.generate_excel(writer, machine_df, plant, machine_name)
 
-                except Exception as e:
-                    print(e)
-                    sys.exit(1)
+                    file_list.append({'file_name': file_name, 'excel_file': excel_file})
 
-                machine_groups = df_selected.groupby('Name')
+                    # Generate Chart
+                    image_buffer = self.generate_chart(save_path, plant, report_date1, df_chart)
+                    image_buffers.append(image_buffer)
 
-                for machine_name, machine_df in machine_groups:
-                    # 處理停機情況
-                    if not machine_df['ProductItem'].iloc[0]:
-                        continue
-
-                    machine_df = machine_df.sort_values(by=['Date', 'Shift', 'Period'])
-                    self.generate_excel(writer, machine_df, plant, machine_name)
-
-
-            file_list.append({'file_name': file_name, 'excel_file': excel_file})
-
-            # Generate Chart
-            image_buffer = self.generate_chart(save_path, plant, report_date1, df_chart)
-            image_buffers.append(image_buffer)
+            except Exception as e:
+                print(e)
+                sys.exit(1)
 
             self.delete_mes_olap(report_date1, report_date2, plant)
             self.insert_mes_olap(df_selected)
@@ -264,8 +260,8 @@ class mes_daily_report(object):
         sql_delete = f"""
             delete
             from {table_name}
-            WHERE Name like '%{plant}%' and ((date = '{report_date2}' AND period BETWEEN '00:00' AND '05:00')
-            OR (date = '{report_date1}' AND period BETWEEN '06:00' AND '23:00'))
+            WHERE Name like '%{plant}%' and ((date = '{report_date2}' AND period BETWEEN 0 AND 5)
+            OR (date = '{report_date1}' AND period BETWEEN 6 AND 23))
         """
         db.execute_sql(sql_delete)
 
@@ -302,11 +298,12 @@ class mes_daily_report(object):
                 Activation = row['Activation']
 
                 if Date != 'null':
+                    SN = str(row['Date']).replace('-', '') + str(int(Period)).zfill(2)
                     sql = f"""insert into {table_name}(Date,Name,Line,Shift,WorkOrderId,PartNo,ProductItem,AQL,ProductionTime,
                     Period,max_speed,min_speed,avg_speed,LineSpeedStd,sum_qty,Separate,Target,Scrap,SecondGrade,OverControl,
-                    WeightValue,WeightLower,WeightUpper, Activation, update_time) Values('{Date}','{Name}','{Line}',N'{Shift}','{WorkOrderId}','{PartNo}',
-                    '{ProductItem}','{AQL}',{ProductionTime},'{Period}',{max_speed},{min_speed},{avg_speed},{LineSpeedStd},
-                    {sum_qty},'{Separate}',{Target},'{Scrap}','{SecondGrade}','{OverControl}',{WeightValue},{WeightLower},{WeightUpper}, {Activation}, GETDATE())"""
+                    WeightValue,WeightLower,WeightUpper, Activation, update_time,SN) Values('{Date}','{Name}','{Line}',N'{Shift}','{WorkOrderId}','{PartNo}',
+                    '{ProductItem}','{AQL}',{ProductionTime},{Period},{max_speed},{min_speed},{avg_speed},{LineSpeedStd},
+                    {sum_qty},'{Separate}',{Target},'{Scrap}','{SecondGrade}','{OverControl}',{WeightValue},{WeightLower},{WeightUpper}, {Activation}, GETDATE(),{SN})"""
                     # print(sql)
                     db.execute_sql(sql)
         except Exception as e:
@@ -508,6 +505,8 @@ class mes_daily_report(object):
 
         # 轉出Excel前進行資料處理
         df['ProductionTime'] = (df['ProductionTime'] // 60).astype(str) + 'H'
+        df['Period'] = df['Period'].astype(str).str.zfill(2) + ":00"
+
         # Change column names
         df.rename(columns=self.header_columns, inplace=True)
 
@@ -547,11 +546,11 @@ class mes_daily_report(object):
                         cell.value = float(cell.value)
                     except ValueError:
                         pass
-                elif col_letter in [colmn_letter['OpticalRate'], colmn_letter['Activation']]:
+                elif col_letter in [colmn_letter['OpticalRate']]:
                     worksheet.column_dimensions[col_letter].width = 10
                     cell.alignment = self.center_align_style.alignment
                     cell.number_format = '0.0%'
-                elif col_letter in [colmn_letter['WeightLower'], colmn_letter['WeightUpper']]:
+                elif col_letter in [colmn_letter['WeightLower'], colmn_letter['WeightUpper'], colmn_letter['Activation']]:
                     worksheet.column_dimensions[col_letter].hidden = True
                 else:
                     cell.alignment = self.center_align_style.alignment
@@ -614,10 +613,12 @@ class mes_daily_report(object):
                     worksheet.column_dimensions[col_letter].width = 15
                     cell.alignment = self.right_align_style.alignment
                     cell.number_format = '#,##0'
-                elif col_letter in [colmn_letter['Separate'], colmn_letter['Scrap'], colmn_letter['SecondGrade'], colmn_letter['OverControl'], colmn_letter['OpticalNGRate'], colmn_letter['ActiveRate']]:
+                elif col_letter in [colmn_letter['Separate'], colmn_letter['Scrap'], colmn_letter['SecondGrade'], colmn_letter['OverControl'], colmn_letter['OpticalNGRate']]:
                     worksheet.column_dimensions[col_letter].width = 10
                     cell.alignment = self.center_align_style.alignment
                     cell.number_format = '0.0%'  # 百分比格式，小數點 1 位
+                elif col_letter in [colmn_letter['ActiveRate']]:
+                    worksheet.column_dimensions[col_letter].hidden = True
                 else:
                     cell.alignment = self.center_align_style.alignment
 
@@ -1076,11 +1077,11 @@ class mes_daily_report(object):
     #     return image_stream
 
 from datetime import datetime, timedelta, date
-fix_mode = False
+fix_mode = True
 
 
 if fix_mode:
-    start_date = date(2024, 10, 9)
+    start_date = date(2024, 10, 26)
     end_date = date(2024, 10, 26)
 
     current_date = start_date
