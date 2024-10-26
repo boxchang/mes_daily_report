@@ -505,7 +505,7 @@ class mes_daily_report(object):
 
         # 轉出Excel前進行資料處理
         df['ProductionTime'] = (df['ProductionTime'] // 60).astype(str) + 'H'
-        df['Period'] = df['Period'].astype(str).str.zfill(2) + ":00"
+        df['Period'] = df['Period'].apply(lambda x: f"{int(x):02}:00")
 
         # Change column names
         df.rename(columns=self.header_columns, inplace=True)
@@ -546,11 +546,11 @@ class mes_daily_report(object):
                         cell.value = float(cell.value)
                     except ValueError:
                         pass
-                elif col_letter in [colmn_letter['OpticalRate']]:
+                elif col_letter in [colmn_letter['OpticalRate'], colmn_letter['Activation']]:
                     worksheet.column_dimensions[col_letter].width = 10
                     cell.alignment = self.center_align_style.alignment
                     cell.number_format = '0.0%'
-                elif col_letter in [colmn_letter['WeightLower'], colmn_letter['WeightUpper'], colmn_letter['Activation']]:
+                elif col_letter in [colmn_letter['WeightLower'], colmn_letter['WeightUpper']]:
                     worksheet.column_dimensions[col_letter].hidden = True
                 else:
                     cell.alignment = self.center_align_style.alignment
@@ -613,12 +613,12 @@ class mes_daily_report(object):
                     worksheet.column_dimensions[col_letter].width = 15
                     cell.alignment = self.right_align_style.alignment
                     cell.number_format = '#,##0'
-                elif col_letter in [colmn_letter['Separate'], colmn_letter['Scrap'], colmn_letter['SecondGrade'], colmn_letter['OverControl'], colmn_letter['OpticalNGRate']]:
+                elif col_letter in [colmn_letter['Separate'], colmn_letter['Scrap'], colmn_letter['SecondGrade'], colmn_letter['OverControl'], colmn_letter['OpticalNGRate'], colmn_letter['ActiveRate']]:
                     worksheet.column_dimensions[col_letter].width = 10
                     cell.alignment = self.center_align_style.alignment
                     cell.number_format = '0.0%'  # 百分比格式，小數點 1 位
-                elif col_letter in [colmn_letter['ActiveRate']]:
-                    worksheet.column_dimensions[col_letter].hidden = True
+                # elif col_letter in [colmn_letter['ActiveRate']]:
+                #     worksheet.column_dimensions[col_letter].hidden = True
                 else:
                     cell.alignment = self.center_align_style.alignment
 
@@ -1077,7 +1077,7 @@ class mes_daily_report(object):
     #     return image_stream
 
 from datetime import datetime, timedelta, date
-fix_mode = True
+fix_mode = False
 
 
 if fix_mode:
