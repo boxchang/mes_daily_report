@@ -37,6 +37,8 @@ class mes_daily_report(object):
     header_border = Border(bottom=Side(style='thin'))
     header_columns = {
             'Name': '機台號',
+            'WorkOrderId': '工單',
+            'PartNo': '料號',
             'ProductItem': '品項',
             'Line': '線別',
             'Shift': '班別',
@@ -53,7 +55,9 @@ class mes_daily_report(object):
             'OverControl': '超內控%',
             'WeightValue': 'IPQC克重',
             'WeightLower': '重量下限',
-            'WeightUpper': '重量上限'
+            'WeightUpper': '重量上限',
+            'Activation': '稼動率',
+            'OpticalNGRate': '光檢不良率'
         }
 
     # 配置日志记录器
@@ -98,7 +102,7 @@ class mes_daily_report(object):
         return smtp_config, to_emails
 
     def send_email(self, file_list, image_buffers, data_date):
-
+        logging.info(f"Start to send Email")
         smtp_config, to_emails = self.read_config('mes_daily_report_mail.config')
 
         # SMTP Sever config setting
@@ -167,7 +171,7 @@ class mes_daily_report(object):
         finally:
             attachment.close()
 
-    def main(self):
+    def main(self, fix_mode):
         report_date1 = self.report_date1
         report_date2 = self.report_date2
         db = mes_database()
@@ -191,19 +195,27 @@ class mes_daily_report(object):
             excel_file = os.path.join(save_path, file_name)
 
             with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
+                try:
+                    df_main = self.get_df_main(db, report_date1, report_date2, plant)
 
-                df_main = self.get_df_main(db, report_date1, report_date2, plant)
+                    df_detail = self.get_df_detail(db, report_date1, report_date2, plant)
 
-                df_detail = self.get_df_detail(db, report_date1, report_date2, plant)
+                    df_final = pd.merge(df_main, df_detail, on=['Name', 'Period', 'Line'], how='left')
 
-                df_final = pd.merge(df_main, df_detail, on=['Name', 'Period', 'Line'], how='left')
+                    df_activation = self.get_df_activation(db, report_date1, report_date2, plant)
 
-                df_final['Period'] = df_final['Period'].astype(str).str.zfill(2) + ":00"
+                    df_final = pd.merge(df_final, df_activation, on=['Name', 'Period'], how='left')
 
-                df_selected = df_final[['Date', 'Name', 'Line', 'Shift', 'WorkOrderId', 'PartNo', 'ProductItem', 'AQL', 'ProductionTime', 'Period', 'max_speed', 'min_speed', 'avg_speed', 'LineSpeedStd', 'sum_qty', 'Separate', 'Target', 'Scrap', 'SecondGrade', 'OverControl', 'WeightValue', 'WeightLower', 'WeightUpper']]
+                    df_final['Period'] = df_final['Period'].astype(str).str.zfill(2) + ":00"
 
-                df_with_subtotals, df_chart = self.sorting_data(df_selected)
-                self.generate_summary_excel(writer, df_with_subtotals)
+                    df_selected = df_final[['Date', 'Name', 'Line', 'Shift', 'WorkOrderId', 'PartNo', 'ProductItem', 'AQL', 'ProductionTime', 'Period', 'max_speed', 'min_speed', 'avg_speed', 'LineSpeedStd', 'sum_qty', 'Separate', 'Target', 'Scrap', 'SecondGrade', 'OverControl', 'WeightValue', 'OpticalNGRate', 'WeightLower', 'WeightUpper', 'Activation']]
+
+                    df_with_subtotals, df_chart = self.sorting_data(db, df_selected)
+                    self.generate_summary_excel(writer, df_with_subtotals)
+
+                except Exception as e:
+                    print(e)
+                    sys.exit(1)
 
                 machine_groups = df_selected.groupby('Name')
 
@@ -215,6 +227,7 @@ class mes_daily_report(object):
                     machine_df = machine_df.sort_values(by=['Date', 'Shift', 'Period'])
                     self.generate_excel(writer, machine_df, plant, machine_name)
 
+
             file_list.append({'file_name': file_name, 'excel_file': excel_file})
 
             # Generate Chart
@@ -224,24 +237,27 @@ class mes_daily_report(object):
             self.delete_mes_olap(report_date1, report_date2, plant)
             self.insert_mes_olap(df_selected)
 
-        # Send Email
-        max_reSend = 5
-        reSent = 0
-        while reSent<max_reSend:
-            try:
-                self.send_email(file_list, image_buffers, report_date1)
-                print('Email sent successfully')
-                logging.info(f"Email sent successfully")
-                break
-            except Exception as e:
-                print(f'Email sending failed: {e}')
-                logging.info(f"Email sending failed: {e}")
-                reSent += 1
-                if reSent >= max_reSend:
-                    print('Failed to send email after 5 retries')
-                    logging.info(f"Failed to send email after 5 retries")
-                    break
-                time.sleep(180) #seconds
+            # Send Email
+            if not fix_mode:
+                max_reSend = 5
+                reSent = 0
+                while reSent < max_reSend:
+                    try:
+                        self.send_email(file_list, image_buffers, report_date1)
+                        print('Email sent successfully')
+                        logging.info(f"Email sent successfully")
+                        break
+                    except Exception as e:
+                        print(f'Email sending failed: {e}')
+                        logging.info(f"Email sending failed: {e}")
+                        reSent += 1
+                        if reSent >= max_reSend:
+                            print('Failed to send email after 5 retries')
+                            logging.info(f"Failed to send email after 5 retries")
+                            break
+                        time.sleep(180)  # seconds
+
+
     def delete_mes_olap(self,report_date1,report_date2, plant):
         db = mes_olap_database()
         table_name = '[MES_OLAP].[dbo].[mes_daily_report_raw]'
@@ -255,41 +271,46 @@ class mes_daily_report(object):
 
 
     def insert_mes_olap(self, df):
-        df = df.replace({np.nan: 'null'})
-        db = mes_olap_database()
-        table_name = '[MES_OLAP].[dbo].[mes_daily_report_raw]'
-        for index, row in df.iterrows():
-            Date = row['Date']
-            Name = row['Name']
-            Line = row['Line']
-            Shift = row['Shift']
-            WorkOrderId = row['WorkOrderId']
-            PartNo = row['PartNo']
-            ProductItem = row['ProductItem']
-            AQL = row['AQL']
-            ProductionTime = row['ProductionTime']
-            Period = row['Period']
-            max_speed = row['max_speed']
-            min_speed = row['min_speed']
-            avg_speed = row['avg_speed']
-            LineSpeedStd = row['LineSpeedStd']
-            sum_qty = row['sum_qty']
-            Separate = row['Separate']
-            Target = row['Target']
-            Scrap = row['Scrap']
-            SecondGrade = row['SecondGrade']
-            OverControl = row['OverControl']
-            WeightValue = row['WeightValue']
-            WeightLower = row['WeightLower']
-            WeightUpper = row['WeightUpper']
+        try:
+            df = df.replace({np.nan: 'null'})
+            db = mes_olap_database()
+            table_name = '[MES_OLAP].[dbo].[mes_daily_report_raw]'
+            for index, row in df.iterrows():
+                Date = row['Date']
+                Name = row['Name']
+                Line = row['Line']
+                Shift = row['Shift']
+                WorkOrderId = row['WorkOrderId']
+                PartNo = row['PartNo']
+                ProductItem = row['ProductItem']
+                AQL = row['AQL']
+                ProductionTime = row['ProductionTime']
+                Period = row['Period']
+                max_speed = row['max_speed']
+                min_speed = row['min_speed']
+                avg_speed = row['avg_speed']
+                LineSpeedStd = row['LineSpeedStd']
+                sum_qty = row['sum_qty']
+                Separate = row['Separate']
+                Target = row['Target']
+                Scrap = row['Scrap']
+                SecondGrade = row['SecondGrade']
+                OverControl = row['OverControl']
+                WeightValue = row['WeightValue']
+                WeightLower = row['WeightLower']
+                WeightUpper = row['WeightUpper']
+                Activation = row['Activation']
 
-            sql = f"""insert into {table_name}(Date,Name,Line,Shift,WorkOrderId,PartNo,ProductItem,AQL,ProductionTime,
-            Period,max_speed,min_speed,avg_speed,LineSpeedStd,sum_qty,Separate,Target,Scrap,SecondGrade,OverControl,
-            WeightValue,WeightLower,WeightUpper, update_time) Values('{Date}','{Name}','{Line}',N'{Shift}','{WorkOrderId}','{PartNo}',
-            '{ProductItem}','{AQL}',{ProductionTime},'{Period}',{max_speed},{min_speed},{avg_speed},{LineSpeedStd},
-            {sum_qty},'{Separate}',{Target},'{Scrap}','{SecondGrade}','{OverControl}',{WeightValue},{WeightLower},{WeightUpper}, GETDATE())"""
-            # print(sql)
-            db.execute_sql(sql)
+                if Date != 'null':
+                    sql = f"""insert into {table_name}(Date,Name,Line,Shift,WorkOrderId,PartNo,ProductItem,AQL,ProductionTime,
+                    Period,max_speed,min_speed,avg_speed,LineSpeedStd,sum_qty,Separate,Target,Scrap,SecondGrade,OverControl,
+                    WeightValue,WeightLower,WeightUpper, Activation, update_time) Values('{Date}','{Name}','{Line}',N'{Shift}','{WorkOrderId}','{PartNo}',
+                    '{ProductItem}','{AQL}',{ProductionTime},'{Period}',{max_speed},{min_speed},{avg_speed},{LineSpeedStd},
+                    {sum_qty},'{Separate}',{Target},'{Scrap}','{SecondGrade}','{OverControl}',{WeightValue},{WeightLower},{WeightUpper}, {Activation}, GETDATE())"""
+                    # print(sql)
+                    db.execute_sql(sql)
+        except Exception as e:
+            print(e)
 
 
     def shift(self, period):
@@ -380,7 +401,19 @@ class mes_daily_report(object):
                     join [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] m on c.MachineName = m.COUNTING_MACHINE
                     where creationTime between CONVERT(DATETIME, '{report_date1} 06:00:00', 120) AND CONVERT(DATETIME, '{report_date2} 05:59:59', 120)
                     and m.MES_MACHINE like '%{plant}%'
+			),
+			Optical as (
+				SELECT MES_MACHINE, LINE,CAST(DATEPART(hour, Cdt) AS INT) AS Period, sum(CAST(OKQty AS BIGINT)) OKQty, sum(CAST(NGQty AS BIGINT)) NGQty, 
+				CASE 
+						 WHEN sum(CAST(NGQty AS BIGINT)) = 0 THEN 0
+						 ELSE ROUND(CAST(sum(CAST(NGQty AS BIGINT)) AS FLOAT)/(sum(CAST(OKQty AS BIGINT))+sum(CAST(NGQty AS BIGINT))), 3) 
+					   END OpticalNGRate
+				  FROM [PMG_DEVICE].[dbo].[OpticalDevice] o
+				  JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] m on o.DeviceId = m.COUNTING_MACHINE
+				  where Cdt between CONVERT(DATETIME, '{report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{report_date2} 06:00:00', 120)
+				  group by MES_MACHINE, LINE, CAST(DATEPART(hour, Cdt) AS INT)
 			)
+			
             SELECT 
                 wo.MachineId,
                 mach.Name,
@@ -405,14 +438,15 @@ class mes_daily_report(object):
                 CAST(60 * wo.LineSpeedStd AS INT) AS Target,
                 weight_result OverControl,
                 CAST(round(weight_value,2) AS DECIMAL(10, 2)) WeightValue,
+                OpticalNGRate,
 				CAST(round(weight_lower,2) AS DECIMAL(10, 2)) WeightLower,
 				CAST(round(weight_upper,2) AS DECIMAL(10, 2)) WeightUpper,
                 runcard
-                
             FROM 
                 Machines mach
                 LEFT JOIN WorkOrderInfo wo ON mach.Name = wo.Name
                 LEFT JOIN CountingData cd ON wo.Name = cd.mes_machine AND wo.Line = cd.line AND wo.Period = cd.Period
+                LEFT JOIN Optical o ON wo.Name = o.MES_MACHINE AND wo.Line = o.LINE AND wo.Period = o.Period
             ORDER BY 
                 mach.Name, 
                 wo.Period, 
@@ -443,7 +477,35 @@ class mes_daily_report(object):
 
         return df_detail
 
+    def get_df_activation(self, db, report_date1, report_date2, plant):
+        try:
+            sql = f"""
+                  SELECT MES_MACHINE Name, CAST(DATEPART(hour, CreationTime) AS INT) AS Period, CASE WHEN min(Speed) != 0 THEN 1 ELSE 0 END Activation
+                  FROM [PMG_DEVICE].[dbo].[COUNTING_DATA] c
+                  JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] cm on c.MachineName = cm.COUNTING_MACHINE
+                  where CreationTime between CONVERT(DATETIME, '{report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{report_date2} 05:59:59', 120) 
+                  and MES_MACHINE like '%{plant}%'
+                  group by MES_MACHINE,CAST(DATEPART(hour, CreationTime) AS INT)
+                                    """
+            activation_raws = db.select_sql_dict(sql)
+            df_activation = pd.DataFrame(activation_raws)
+        except Exception as e:
+            print(e)
+
+        return df_activation
+
     def generate_excel(self, writer, df, plant, machine_name):
+        colmn_index = {'Date': 0, 'Name': 1, 'Line': 2, 'Shift': 3, 'WorkOrderId': 4, 'PartNo': 5, 'ProductItem': 6,
+                       'AQL': 7, 'ProductionTime': 8, 'Period': 9, 'max_speed': 10, 'min_speed': 11,
+                       'avg_speed': 12, 'LineSpeedStd': 13, 'sum_qty': 14, 'Separate': 15,
+                       'Scrap': 16, 'SecondGrade': 17, 'OverControl': 18, 'WeightValue': 19,
+                       'OpticalRate': 20, 'WeightLower': 21, 'WeightUpper': 22, 'Activation': 23}
+        colmn_letter = {'Date':'A', 'Name': 'B', 'Line': 'C', 'Shift': 'D', 'WorkOrderId': 'E', 'PartNo': 'F', 'ProductItem': 'G',
+                       'AQL': 'H', 'ProductionTime': 'I', 'Period': 'J', 'max_speed': 'K', 'min_speed': 'L',
+                        'avg_speed': 'M', 'LineSpeedStd': 'N', 'sum_qty': 'O', 'Separate': 'P', 'Target': 'Q',
+                        'Scrap': 'R', 'SecondGrade': 'S', 'OverControl': 'T', 'WeightValue': 'U', 'OpticalRate': 'V',
+                        'WeightLower': 'W', 'WeightUpper': 'X', 'Activation': 'Y'}
+
         # 轉出Excel前進行資料處理
         df['ProductionTime'] = (df['ProductionTime'] // 60).astype(str) + 'H'
         # Change column names
@@ -475,41 +537,43 @@ class mes_daily_report(object):
 
             # Set alignment
             for cell in col:
-                if col_letter in ['K', 'L', 'M', 'N']:  # Apply right alignment for specific columns
+                if col_letter in [colmn_letter['max_speed'], colmn_letter['min_speed'], colmn_letter['avg_speed'], colmn_letter['LineSpeedStd']]:  # Apply right alignment for specific columns
                     cell.alignment = self.right_align_style.alignment
-                elif col_letter in ['O', 'Q']:
+                elif col_letter in [colmn_letter['sum_qty'], colmn_letter['Target']]:
                     cell.number_format = '#,##0'
                     cell.alignment = self.center_align_style.alignment
-                elif col_letter in ['U']:
+                elif col_letter in [colmn_letter['WeightValue']]:
                     try:
                         cell.value = float(cell.value)
                     except ValueError:
                         pass
+                elif col_letter in [colmn_letter['OpticalRate'], colmn_letter['Activation']]:
+                    worksheet.column_dimensions[col_letter].width = 10
+                    cell.alignment = self.center_align_style.alignment
+                    cell.number_format = '0.0%'
+                elif col_letter in [colmn_letter['WeightLower'], colmn_letter['WeightUpper']]:
+                    worksheet.column_dimensions[col_letter].hidden = True
                 else:
                     cell.alignment = self.center_align_style.alignment
 
-        worksheet[f'V1'].value = None  # 清空克重下限欄位
-        worksheet[f'W1'].value = None  # 清空克重上限欄位
         for row in range(2, worksheet.max_row + 1):  # 從第2行開始，因為第1行是標題
-            weight_value_cell = worksheet[f'U{row}']
-            weight_lower_cell = worksheet[f'V{row}'].value
-            weight_upper_cell = worksheet[f'W{row}'].value
+            weight_value_cell = worksheet[colmn_letter['WeightValue']+str(row)]
+            weight_lower_cell = worksheet[colmn_letter['WeightLower']+str(row)].value
+            weight_upper_cell = worksheet[colmn_letter['WeightUpper']+str(row)].value
 
             if weight_lower_cell or weight_upper_cell:
                 comment = Comment(text="IPQC範圍("+weight_lower_cell+"-"+weight_upper_cell+")", author="System")  # 創建註解
                 weight_value_cell.comment = comment
 
-            worksheet[f'V{row}'].value = None  # 清空克重下限欄位
-            worksheet[f'W{row}'].value = None  # 清空克重上限欄位
-
         return workbook
+
 
     def generate_summary_excel(self, writer, df):
 
         colmn_index = {'Name': 0, 'ProductItem': 1, 'AQL': 2, 'Shift': 3, 'Line': 4, 'max_speed': 5, 'min_speed': 6,
-                       'avg_speed': 7, 'LineSpeedStd': 8, 'ProductionTime': 9, 'sum_qty': 10, 'Separate': 11, 'Scrap': 12, 'SecondGrade': 13, 'Target': 14, 'OverControl': 15}
+                       'avg_speed': 7, 'LineSpeedStd': 8, 'ProductionTime': 9, 'sum_qty': 10, 'Separate': 11, 'Scrap': 12, 'SecondGrade': 13, 'Target': 14, 'OverControl': 15, 'ActiveRate': 16, 'OpticalNGRate': 17}
         colmn_letter = {'Name': 'A', 'ProductItem': 'B', 'AQL': 'C', 'Shift': 'D', 'Line': 'E',
-                       'max_speed': 'F', 'min_speed': 'G', 'avg_speed': 'H', 'LineSpeedStd': 'I', 'ProductionTime': 'J', 'sum_qty': 'K', 'Separate': 'L', 'Scrap': 'M', 'SecondGrade': 'N', 'Target': 'O', 'OverControl': 'P'}
+                       'max_speed': 'F', 'min_speed': 'G', 'avg_speed': 'H', 'LineSpeedStd': 'I', 'ProductionTime': 'J', 'sum_qty': 'K', 'Separate': 'L', 'Scrap': 'M', 'SecondGrade': 'N', 'Target': 'O', 'OverControl': 'P', 'ActiveRate': 'Q', 'OpticalNGRate': 'R'}
 
         # Create a bold font style
         bold_font = Font(bold=True)
@@ -550,7 +614,7 @@ class mes_daily_report(object):
                     worksheet.column_dimensions[col_letter].width = 15
                     cell.alignment = self.right_align_style.alignment
                     cell.number_format = '#,##0'
-                elif col_letter in [colmn_letter['Separate'], colmn_letter['Scrap'], colmn_letter['SecondGrade'], colmn_letter['OverControl']]:
+                elif col_letter in [colmn_letter['Separate'], colmn_letter['Scrap'], colmn_letter['SecondGrade'], colmn_letter['OverControl'], colmn_letter['OpticalNGRate'], colmn_letter['ActiveRate']]:
                     worksheet.column_dimensions[col_letter].width = 10
                     cell.alignment = self.center_align_style.alignment
                     cell.number_format = '0.0%'  # 百分比格式，小數點 1 位
@@ -600,10 +664,13 @@ class mes_daily_report(object):
             # 總共折疊的區域
             worksheet.column_dimensions.group(colmn_letter['Shift'], colmn_letter['min_speed'], hidden=True)
 
+        # 稼動率說明
+        worksheet[f'Q1'].comment = Comment(text="點數機(A1)生產時間/工單預計生產時間", author="System")
+
         return workbook
 
     # Sorting data
-    def sorting_data(self, df):
+    def sorting_data(self, db, df):
 
         chart_rows = []
 
@@ -624,6 +691,75 @@ class mes_daily_report(object):
             ng_ratio = ng_count / len(data_list)
             return ng_ratio
 
+        def calculate_activation2(act_series):
+            zero_count = (act_series == 0).sum()
+            total_count = len(act_series)
+            zero_ratio = (total_count-zero_count) / total_count
+            return zero_ratio
+
+
+        def calculate_activation(mach):
+            try:
+                # 用IPQC的報工反推生產工單，再從工單的 StartDate與EndDate去算出稼動率 - SCADA車速為0的時間
+                # StartDate若為小於 2024-10-10 06:30:00 則以 2024-10-10 06:00:00 計算，以30分鐘為準備期間
+                # EndDate若為超過 2024-10-11 05:59:59 則以 2024-10-11 05:59:59 計算
+                sql = f"""
+                    WITH IPQC_WO AS (
+                    SELECT distinct w.Id,name
+                      FROM [PMGMES].[dbo].[PMG_MES_WorkOrder] w 
+                      JOIN [dbo].[PMG_DML_DataModelList] dl on w.MachineId = dl.Id
+                      JOIN [dbo].[PMG_MES_RunCard] r on r.WorkOrderId = w.Id
+                      JOIN [dbo].[PMG_MES_IPQCInspectingRecord] ipqc on ipqc.RunCardId = r.Id
+                      where r.InspectionDate = '{report_date1}'
+                      and name = '{mach}'
+                    )
+                    Select CASE 
+                            WHEN DATEDIFF(minute, CAST(StartDate AS DATETIME), CONVERT(DATETIME, '{report_date1} 06:30:00', 120)) < 30 
+                            THEN CONVERT(DATETIME, '{report_date1} 06:00:00', 120) 
+                            WHEN DATEDIFF(minute, CONVERT(DATETIME, '{report_date1} 06:00:00', 120), CAST(StartDate AS DATETIME)) < 0 
+                            THEN CONVERT(DATETIME, '20241013 06:00:00', 120)
+                            ELSE StartDate 
+                        END AS StartDate,
+                        CASE 
+                            WHEN DATEDIFF(minute, CONVERT(DATETIME, '{report_date2} 06:30:00', 120),CAST(EndDate AS DATETIME)) > 30 
+                            THEN EndDate
+                            ELSE CONVERT(DATETIME, '{report_date2} 06:00:00', 120) 
+                        END AS EndDate
+                        from (
+                    select name,min(StartDate) StartDate,max(EndDate) EndDate from [PMGMES].[dbo].[PMG_MES_WorkOrder] w 
+                    JOIN IPQC_WO i on w.Id = i.Id
+                    group by name
+                    ) A
+                """
+                detail_raws = db.select_sql_dict(sql)
+                print(sql)
+                mach_start_date = detail_raws[0]["StartDate"][:-1]
+                mach_end_date = detail_raws[0]["EndDate"][:-1]
+                start_date = datetime.strptime(mach_start_date, '%Y-%m-%d %H:%M:%S.%f')
+                end_date = datetime.strptime(mach_end_date, '%Y-%m-%d %H:%M:%S.%f')
+                time_difference = end_date - start_date
+                wo_time = time_difference.total_seconds()  # 工單預計作業時間
+                if wo_time > 86400:
+                    wo_time = 86400
+
+                sql = f"""
+                SELECT count(*) * 300 stop_time
+                  FROM [PMG_DEVICE].[dbo].[COUNTING_DATA] d
+                  JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] m on d.MachineName = m.COUNTING_MACHINE
+                  where m.MES_MACHINE = '{mach}' and d.MachineName like '%A'
+                  and CreationTime between CONVERT(DATETIME, '{report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{report_date2} 05:59:59', 120) 
+                  and (Qty2 = 0 or Qty2 is null)
+                """
+                detail_raws = db.select_sql_dict(sql)
+                stop_time = detail_raws[0]["stop_time"]
+
+                run_time = int(wo_time) - int(stop_time)
+                active_rate = run_time / wo_time
+                return round(active_rate, 2)
+            except Exception as e:
+                print(e)
+
+
         try:
             # Drop the 'Period' and 'Date' column from each group
             group_without_period = df.drop(columns=['Period', 'Date'])
@@ -635,6 +771,7 @@ class mes_daily_report(object):
             chart_rows = []
 
             for mach_name, mach_group in mach_grouped:
+
                 # 處理停機情況
                 if not mach_group['ProductItem'].iloc[0]:
                     subtotal = {
@@ -654,6 +791,7 @@ class mes_daily_report(object):
                         'SecondGrade': '',
                         'Target': 0,
                         'OverControl': '',
+                        'Activation': ''
                     }
                     subtotal_df = pd.DataFrame([subtotal])
                     chart_rows.append(subtotal_df)
@@ -696,6 +834,7 @@ class mes_daily_report(object):
                         'SecondGrade': '',
                         'Target': line_group['Target'].sum(),
                         'OverControl': counting_ng_ratio(line_group['OverControl']),
+                        'Activation': calculate_activation2(line_group['Activation']),
                     }
                     line_sum_df = pd.DataFrame([line_sum])
 
@@ -727,6 +866,7 @@ class mes_daily_report(object):
                     'SecondGrade': '',
                     'Target': day_df['Target'].sum(),
                     'OverControl': day_df['OverControl'].mean(),
+                    'Activation': day_df['Activation'].mean()
                 }
                 subtotal_df = pd.DataFrame([subtotal])
                 subtotal_df['avg_speed'] = subtotal_df['avg_speed'].round(0)
@@ -760,6 +900,7 @@ class mes_daily_report(object):
                     'SecondGrade': '',
                     'Target': night_df['Target'].sum(),
                     'OverControl': night_df['OverControl'].mean(),
+                    'Activation': night_df['Activation'].mean(),
                 }
                 subtotal_df = pd.DataFrame([subtotal])
                 subtotal_df['avg_speed'] = subtotal_df['avg_speed'].round(0)
@@ -799,6 +940,8 @@ class mes_daily_report(object):
                     'SecondGrade': '',
                     'Target': mach_group['Target'].sum(),
                     'OverControl': counting_ng_ratio(mach_group['OverControl']),
+                    'Activation': calculate_activation2(mach_group['Activation']),
+                    'OpticalNGRate': mach_group['OpticalNGRate'].mean()
                 }
                 subtotal_df = pd.DataFrame([subtotal])
                 subtotal_df['avg_speed'] = subtotal_df['avg_speed'].round(0)
@@ -865,7 +1008,9 @@ class mes_daily_report(object):
                 ax1.text(bar.get_x() + bar.get_width() / 2, height + 20000, f'{rate:.1f}%', ha='center', va='bottom',
                          fontsize=10)
 
-        plt.title(f'{plant} {report_date}產量')
+        achieve_rate = 95 if plant == "NBR" else 98
+
+        plt.title(f'{plant} {report_date}產量 (目標達成率{achieve_rate}%)')
 
         # Display the legend of the bar chart and line chart together
         fig.legend(loc="upper right", bbox_to_anchor=(1, 1), bbox_transform=ax1.transAxes)
@@ -930,15 +1075,34 @@ class mes_daily_report(object):
     #
     #     return image_stream
 
-from datetime import datetime, timedelta
-report_date1 = datetime.today() - timedelta(days=1)
-report_date1 = report_date1.strftime('%Y%m%d')
+from datetime import datetime, timedelta, date
+fix_mode = False
 
-report_date2 = datetime.today()
-report_date2 = report_date2.strftime('%Y%m%d')
 
-# report_date1 = "2024-09-26"
-# report_date2 = "2024-09-27"
+if fix_mode:
+    start_date = date(2024, 10, 9)
+    end_date = date(2024, 10, 26)
 
-report = mes_daily_report(report_date1, report_date2)
-report.main()
+    current_date = start_date
+    while current_date <= end_date:
+
+        report_date1 = current_date
+        report_date2 = report_date1 + timedelta(days=1)
+
+        report_date1 = report_date1.strftime('%Y%m%d')
+        report_date2 = report_date2.strftime('%Y%m%d')
+        report = mes_daily_report(report_date1, report_date2)
+        report.main(fix_mode)
+        current_date += timedelta(days=1)
+else:
+    report_date1 = datetime.today() - timedelta(days=1)
+    report_date1 = report_date1.strftime('%Y%m%d')
+
+    report_date2 = datetime.today()
+    report_date2 = report_date2.strftime('%Y%m%d')
+
+    # report_date1 = "2024-09-26"
+    # report_date2 = "2024-09-27"
+
+    report = mes_daily_report(report_date1, report_date2)
+    report.main(fix_mode)
