@@ -3,7 +3,7 @@ import os
 import numpy as np
 from matplotlib.ticker import FuncFormatter
 from openpyxl.utils import get_column_letter
-from database import mes_database, mes_olap_database
+from database import mes_database, mes_olap_database, vnedc_database
 from openpyxl.formatting.rule import CellIsRule
 curPath = os.path.abspath(os.path.dirname(__file__))
 rootPath = os.path.split(curPath)[0]
@@ -63,7 +63,7 @@ class mes_daily_report(object):
 
     # 配置日志记录器
     logging.basicConfig(
-        level=logging.DEBUG,  # 设置日志级别为 DEBUG，这样所有级别的日志都会被记录
+        level=logging.INFO,  # 设置日志级别为 DEBUG，这样所有级别的日志都会被记录
         format='%(asctime)s - %(levelname)s - %(message)s',  # 指定日志格式
         filename='app.log',  # 指定日志文件
         filemode='w'  # 写入模式，'w' 表示每次运行程序时会覆盖日志文件
@@ -76,6 +76,7 @@ class mes_daily_report(object):
     def read_config(self, config_file):
         smtp_config = {}
         to_emails = []
+        admin_emails = []
 
         current_section = None
 
@@ -99,12 +100,14 @@ class mes_daily_report(object):
                         smtp_config[key.strip()] = value.strip()
                 elif current_section == 'recipients':
                     to_emails.append(line)
+                elif current_section == 'admin_email':
+                    admin_emails.append(line)
 
-        return smtp_config, to_emails
+        return smtp_config, to_emails, admin_emails
 
     def send_email(self, file_list, image_buffers, data_date):
         logging.info(f"Start to send Email")
-        smtp_config, to_emails = self.read_config('mes_daily_report_mail.config')
+        smtp_config, to_emails, admin_emails = self.read_config('mes_daily_report_mail.config')
 
         # SMTP Sever config setting
         smtp_server = smtp_config.get('smtp_server')
@@ -172,6 +175,78 @@ class mes_daily_report(object):
         finally:
             attachment.close()
 
+
+    def send_admin_email(self, file_list, image_buffers, data_date):
+        logging.info(f"Start to send Email")
+        smtp_config, to_emails, admin_emails = self.read_config('mes_daily_report_mail.config')
+
+        # SMTP Sever config setting
+        smtp_server = smtp_config.get('smtp_server')
+        smtp_port = int(smtp_config.get('smtp_port', 587))
+        smtp_user = smtp_config.get('smtp_user')
+        smtp_password = smtp_config.get('smtp_password')
+        sender_alias = "GD Report"
+        sender_email = smtp_user
+        # Mail Info
+        msg = MIMEMultipart()
+        msg['From'] = f"{sender_alias} <{sender_email}>"
+        msg['To'] = ', '.join(admin_emails)
+        msg['Subject'] = f'[GD Report] 產量日報表 {data_date} 資料異常, 取消派送'
+
+        # Mail Content
+        html = f"""\
+                <html>
+                  <body>
+                  {data_date} 報表數據異常, 報表取消派送給相關人員<br>
+                """
+        for i in range(len(image_buffers)):
+            html += f'<img src="cid:chart_image{i}"><br>'
+
+        html += """\
+                  </body>
+                </html>
+                """
+
+        msg.attach(MIMEText(html, 'html'))
+
+        # Attach Excel
+        for file in file_list:
+            excel_file = file['excel_file']
+            file_name = file['file_name']
+            with open(excel_file, 'rb') as attachment:
+                part = MIMEBase('application', 'octet-stream')
+                part.set_payload(attachment.read())
+                encoders.encode_base64(part)
+                part.add_header('Content-Disposition', f"attachment; filename= {file_name}")
+                msg.attach(part)
+        logging.info(f"Attached Excel files")
+
+        # Attach Picture
+        for i, buffer in enumerate(image_buffers):
+            image = MIMEImage(buffer.read())
+            image.add_header('Content-ID', f'<chart_image{i}>')
+            msg.attach(image)
+        logging.info(f"Attached Picture")
+
+        # Send Email
+        try:
+            # server = smtplib.SMTP(smtp_server, smtp_port)
+            # server.starttls()  # 启用 TLS 加密
+            # server.login(smtp_user, smtp_password)  # 登录到 SMTP 服务器
+            # server.sendmail(smtp_user, to_emails, msg.as_string())
+            # server.quit()
+
+            # 發送郵件（不進行密碼驗證）
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.ehlo()  # 啟動與伺服器的對話
+            server.sendmail(smtp_user, to_emails, msg.as_string())
+            print("Sent Email Successfully")
+        except Exception as e:
+            print(f"Sent Email Fail: {e}")
+            logging.info(f"Sent Email Fail: {e}")
+        finally:
+            attachment.close()
+
     def main(self, fix_mode):
         report_date1 = self.report_date1
         report_date2 = self.report_date2
@@ -190,7 +265,7 @@ class mes_daily_report(object):
             os.makedirs(save_path)
 
         for plant in ['NBR', 'PVC']:
-
+            logging.info(f"{plant} start running......")
             # Create Excel file
             file_name = f'MES_{plant}_DAILY_Report_{report_date1}.xlsx'
             excel_file = os.path.join(save_path, file_name)
@@ -228,25 +303,48 @@ class mes_daily_report(object):
             #self.delete_mes_olap(report_date1, report_date2, plant)
             #self.insert_mes_olap(df_selected)
 
-        # Send Email
-        if not fix_mode:
-            max_reSend = 5
-            reSent = 0
-            while reSent < max_reSend:
-                try:
-                    self.send_email(file_list, image_buffers, report_date1)
-                    print('Email sent successfully')
-                    logging.info(f"Email sent successfully")
-                    break
-                except Exception as e:
-                    print(f'Email sending failed: {e}')
-                    logging.info(f"Email sending failed: {e}")
-                    reSent += 1
-                    if reSent >= max_reSend:
-                        print('Failed to send email after 5 retries')
-                        logging.info(f"Failed to send email after 5 retries")
+        print("isCountingError Check")
+        logging.info(f"isCountingError Check")
+        if self.isCountingError(report_date1, report_date2):
+            self.send_admin_email(file_list, image_buffers, report_date1)
+            print('Admin Email sent successfully')
+            logging.info(f"Admin Email sent successfully")
+        else:
+            # Send Email
+            if not fix_mode:
+                max_reSend = 5
+                reSent = 0
+                while reSent < max_reSend:
+                    try:
+                        self.send_email(file_list, image_buffers, report_date1)
+                        print('Email sent successfully')
+                        logging.info(f"Email sent successfully")
                         break
-                    time.sleep(180)  # seconds
+                    except Exception as e:
+                        print(f'Email sending failed: {e}')
+                        logging.info(f"Email sending failed: {e}")
+                        reSent += 1
+                        if reSent >= max_reSend:
+                            print('Failed to send email after 5 retries')
+                            logging.info(f"Failed to send email after 5 retries")
+                            break
+                        time.sleep(180)  # seconds
+
+    def isCountingError(self, report_date1,report_date2):
+        db = vnedc_database()
+        sql = f"""
+        SELECT *
+          FROM [VNEDC].[dbo].[spiderweb_monitor_device_log] where update_at between 
+           CONVERT(DATETIME, '{report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{report_date2} 05:59:59', 120) 
+           and func_name = 'COUNTING DEVICE'
+           
+           
+        """
+        results = db.select_sql_dict(sql)
+        if len(results) > 0:
+            return True
+        else:
+            return False
 
 
     def delete_mes_olap(self,report_date1,report_date2, plant):
@@ -290,15 +388,21 @@ class mes_daily_report(object):
                 WeightValue = row['WeightValue']
                 WeightLower = row['WeightLower']
                 WeightUpper = row['WeightUpper']
+                ticket_qty = row['Ticket_Qty']
                 Activation = 0
 
                 if Date != 'null':
+                    if int(Period) >= 0 and int(Period) <= 5:
+                        belong_to = (datetime.strptime(Date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+                    else:
+                        belong_to = Date
+
                     SN = str(row['Date']).replace('-', '') + str(int(Period)).zfill(2)
                     sql = f"""insert into {table_name}(Date,Name,Line,Shift,WorkOrderId,PartNo,ProductItem,AQL,ProductionTime,
                     Period,max_speed,min_speed,avg_speed,LineSpeedStd,sum_qty,Separate,Target,Scrap,SecondGrade,OverControl,
-                    WeightValue,WeightLower,WeightUpper, Activation, update_time,SN) Values('{Date}','{Name}','{Line}',N'{Shift}','{WorkOrderId}','{PartNo}',
+                    WeightValue,WeightLower,WeightUpper, Activation, update_time,SN,ticket_qty,belong_to) Values('{Date}','{Name}','{Line}',N'{Shift}','{WorkOrderId}','{PartNo}',
                     '{ProductItem}','{AQL}',{ProductionTime},{Period},{max_speed},{min_speed},{avg_speed},{LineSpeedStd},
-                    {sum_qty},'{Separate}',{Target},'{Scrap}','{SecondGrade}','{OverControl}',{WeightValue},{WeightLower},{WeightUpper}, {Activation}, GETDATE(),{SN})"""
+                    {sum_qty},'{Separate}',{Target},'{Scrap}','{SecondGrade}','{OverControl}',{WeightValue},{WeightLower},{WeightUpper}, {Activation}, GETDATE(),{SN},{ticket_qty},'{belong_to}')"""
                     # print(sql)
                     db.execute_sql(sql)
         except Exception as e:
@@ -1084,7 +1188,7 @@ class mes_daily_report(object):
 
         # Draw Bar Chart
         bar_width = 0.6
-        bars = ax1.bar(df_chart['Name_short'], df_chart['sum_qty'], width=bar_width, color='lightcoral', label='達成率')
+        bars = ax1.bar(df_chart['Name_short'], df_chart['sum_qty'], width=bar_width, color='lightcoral', label='日目標達成率')
         ax1.bar(df_chart['Name_short'], df_chart['Unfinished'], width=bar_width, bottom=df_chart['sum_qty'], color='lightgreen')
 
         # Create a second Y axis
@@ -1096,7 +1200,7 @@ class mes_daily_report(object):
 
         # Set the X-axis label and the Y-axis label
         ax1.set_xlabel('機台')
-        ax1.set_ylabel('目標產能')
+        ax1.set_ylabel('日產量')
         # 設置 Y 軸的上限為 120 萬
         ax1.set_ylim(0, 1200000)
 
@@ -1115,7 +1219,7 @@ class mes_daily_report(object):
 
         achieve_rate = 95 if plant == "NBR" else 98
 
-        plt.title(f'{plant} {report_date}產量 (目標達成率{achieve_rate}%)')
+        plt.title(f'{plant} {report_date} 日產量與日目標達成率 (達成率目標 > {achieve_rate}%)')
 
         # Display the legend of the bar chart and line chart together
         fig.legend(loc="upper right", bbox_to_anchor=(1, 1), bbox_transform=ax1.transAxes)
@@ -1185,8 +1289,8 @@ fix_mode = False
 
 
 if fix_mode:
-    start_date = date(2024, 10, 26)
-    end_date = date(2024, 10, 26)
+    start_date = date(2024, 11, 1)
+    end_date = date(2024, 11, 11)
 
     current_date = start_date
     while current_date <= end_date:

@@ -75,7 +75,7 @@ class vnedc_database:
     def create_vnedc_connection(self):
         try:
             conn = pyodbc.connect("DRIVER={{SQL Server}};SERVER={server}; database={database}; \
-                                   trusted_connection=no;UID={uid};PWD={pwd}".format(server="192.168.11.31",
+                                   trusted_connection=no;UID={uid};PWD={pwd}".format(server="10.13.104.181",
                                                                                      database="VNEDC",
                                                                                      uid="vnedc",
                                                                                      pwd="vnedc#2024"))
