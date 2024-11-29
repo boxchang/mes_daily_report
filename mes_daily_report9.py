@@ -300,8 +300,12 @@ class mes_daily_report(object):
                 image_buffer = self.generate_chart(save_path, plant, report_date1, df_chart)
                 image_buffers.append(image_buffer)
 
-            #self.delete_mes_olap(report_date1, report_date2, plant)
-            #self.insert_mes_olap(df_selected)
+            logging.info(f"{plant} save raw data")
+            try:
+                self.delete_mes_olap(report_date1, report_date2, plant)
+                self.insert_mes_olap(df_selected)
+            except Exception as e:
+                logging.info(f"{e}")
 
         print("isCountingError Check")
         logging.info(f"isCountingError Check")
@@ -518,11 +522,10 @@ class mes_daily_report(object):
                   where ((r.InspectionDate = '{report_date1}' AND Period between 6 and 23) or (r.InspectionDate = '{report_date2}' AND Period between 0 and 5))
 			),
 			Scrap as (
-				SELECT r.InspectionDate,r.Period,s.CreationTime,m.Name,s.ActualQty,s.DefectCode1,c.Descr,r.WorkOrderId,r.LineName,r.Id runcardId
+				SELECT r.InspectionDate,r.Period,s.CreationTime,m.Name,s.ActualQty,r.WorkOrderId,r.LineName,r.Id runcardId
                   FROM [PMGMES].[dbo].[PMG_MES_Scrap] s
                   JOIN [PMGMES].[dbo].[PMG_MES_RunCard] r on s.RunCardId = r.Id
                   JOIN [PMGMES].[dbo].[PMG_DML_DataModelList] m on r.MachineId = m.Id
-                  LEFT JOIN [PMGMES].[dbo].[PMG_DML_ConstValue] c on c.[Value] = s.DefectCode1
                   where ((r.InspectionDate = '{report_date1}' AND Period between 6 and 23) or (r.InspectionDate = '{report_date2}' AND Period between 0 and 5))
 			)
 			
@@ -723,7 +726,7 @@ class mes_daily_report(object):
                 elif col_letter in [colmn_letter['Separate'], colmn_letter['Scrap'], colmn_letter['SecondGrade'], colmn_letter['OverControl'], colmn_letter['OpticalNGRate']]:
                     worksheet.column_dimensions[col_letter].width = 10
                     cell.alignment = self.center_align_style.alignment
-                    cell.number_format = '0.0%'  # 百分比格式，小數點 1 位
+                    cell.number_format = '0.00%'  # 百分比格式，小數點 1 位
                 elif col_letter in [colmn_letter['ActiveRate']]:
                     worksheet.column_dimensions[col_letter].width = 10
                     cell.alignment = self.center_align_style.alignment
@@ -1006,6 +1009,14 @@ class mes_daily_report(object):
                     mean_speed = line_group['LineSpeedStd'].mean()
                     mean_speed = round(mean_speed) if not pd.isna(mean_speed) else 0
 
+                    # Second Grade
+                    line_sum_qty = line_group['sum_qty'].sum()
+                    line_secondGrade_qty = line_group['SecondGrade'].sum()
+                    line_second_rate = round(float(line_secondGrade_qty) / line_sum_qty, 3)
+
+                    line_scrap_qty = line_group['Scrap'].sum()
+                    line_scrap_rate = round(float(line_scrap_qty) / line_sum_qty, 3) if line_sum_qty > 0 else 0
+
                     line_sum = {
                         'Name': '',
                         'ProductItem': join_values(line_group['ProductItem']),
@@ -1020,8 +1031,8 @@ class mes_daily_report(object):
                         'sum_qty': line_group['sum_qty'].sum(),
                         'Ticket_Qty': line_group['Ticket_Qty'].sum(),
                         'Separate': counting_ng_ratio(line_group['Separate']),
-                        'Scrap': line_group['Scrap'].sum(),
-                        'SecondGrade': line_group['SecondGrade'].sum(),
+                        'Scrap': line_scrap_rate,
+                        'SecondGrade': line_second_rate,
                         'Target': line_group['Target'].sum(),
                         'OverControl': counting_ng_ratio(line_group['OverControl']),
                     }
@@ -1056,8 +1067,8 @@ class mes_daily_report(object):
                         'sum_qty': day_df['sum_qty'].sum(),
                         'Ticket_Qty': day_df['Ticket_Qty'].sum(),
                         'Separate': day_df['Separate'].mean(),
-                        'Scrap': day_df['Scrap'].sum(),
-                        'SecondGrade': day_df['SecondGrade'].sum(),
+                        'Scrap': day_df['Scrap'].mean(),
+                        'SecondGrade': day_df['SecondGrade'].mean(),
                         'Target': day_df['Target'].sum(),
                         'OverControl': day_df['OverControl'].mean(),
                     }
@@ -1095,8 +1106,8 @@ class mes_daily_report(object):
                         'sum_qty': night_df['sum_qty'].sum(),
                         'Ticket_Qty': night_df['Ticket_Qty'].sum(),
                         'Separate': night_df['Separate'].mean(),
-                        'Scrap': night_df['Scrap'].sum(),
-                        'SecondGrade': night_df['SecondGrade'].sum(),
+                        'Scrap': night_df['Scrap'].mean(),
+                        'SecondGrade': night_df['SecondGrade'].mean(),
                         'Target': night_df['Target'].sum(),
                         'OverControl': night_df['OverControl'].mean(),
                     }
@@ -1120,11 +1131,6 @@ class mes_daily_report(object):
 
                 # Second Grade
                 sum_qty = mach_group['sum_qty'].sum()
-                secondGrade_qty = mach_group['SecondGrade'].sum()
-                second_rate = round(float(secondGrade_qty)/sum_qty, 3)
-
-                scrap_qty = mach_group['Scrap'].sum()
-                scrap_rate = round(float(scrap_qty)/sum_qty, 3) if sum_qty > 0 else 0
 
                 activation_rows.append(df_activation_row)
 
@@ -1142,8 +1148,8 @@ class mes_daily_report(object):
                     'sum_qty': sum_qty,
                     'Ticket_Qty': mach_group['Ticket_Qty'].sum(),
                     'Separate': counting_ng_ratio(mach_group['Separate']),
-                    'Scrap': scrap_rate,
-                    'SecondGrade': second_rate,
+                    'Scrap': df_tmp['Scrap'].mean(),
+                    'SecondGrade': df_tmp['SecondGrade'].mean(),
                     'Target': mach_group['Target'].sum(),
                     'OverControl': counting_ng_ratio(mach_group['OverControl']),
                     'Activation': activation_rate,
