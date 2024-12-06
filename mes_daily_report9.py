@@ -2,9 +2,9 @@ import sys
 import os
 import numpy as np
 from matplotlib.ticker import FuncFormatter
-from openpyxl.utils import get_column_letter
 from database import mes_database, mes_olap_database, vnedc_database
 from openpyxl.formatting.rule import CellIsRule
+
 curPath = os.path.abspath(os.path.dirname(__file__))
 rootPath = os.path.split(curPath)[0]
 sys.path.append(rootPath)
@@ -22,6 +22,7 @@ import logging
 import time
 from openpyxl.comments import Comment
 
+
 class mes_daily_report(object):
     report_date1 = ""
     report_date2 = ""
@@ -36,30 +37,30 @@ class mes_daily_report(object):
     header_alignment = Alignment(horizontal='center')
     header_border = Border(bottom=Side(style='thin'))
     header_columns = {
-            'Name': '機台號',
-            'WorkOrderId': '工單',
-            'PartNo': '料號',
-            'ProductItem': '品項',
-            'Line': '線別',
-            'Shift': '班別',
-            'max_speed': '車速(最高)',
-            'min_speed': '車速(最低)',
-            'avg_speed': '車速(平均)',
-            'sum_qty': '產量(加總)',
-            'Ticket_Qty': '入庫量(加總)',
-            'ProductionTime': '生產時間',
-            'LineSpeedStd': '標準車速',
-            'Target': '目標產能',
-            'Separate': '隔離',
-            'Scrap': '廢品',
-            'SecondGrade': '二級品',
-            'OverControl': '超內控',
-            'WeightValue': 'IPQC克重',
-            'WeightLower': '重量下限',
-            'WeightUpper': '重量上限',
-            'Activation': '稼動率',
-            'OpticalNGRate': '光檢不良率'
-        }
+        'Name': '機台號',
+        'WorkOrderId': '工單',
+        'PartNo': '料號',
+        'ProductItem': '品項',
+        'Line': '線別',
+        'Shift': '班別',
+        'max_speed': '車速(最高)',
+        'min_speed': '車速(最低)',
+        'avg_speed': '車速(平均)',
+        'sum_qty': '產量(加總)',
+        'Ticket_Qty': '入庫量(加總)',
+        'ProductionTime': '生產時間',
+        'LineSpeedStd': '標準車速',
+        'Target': '目標產能',
+        'Separate': '隔離',
+        'Scrap': '廢品',
+        'SecondGrade': '二級品',
+        'OverControl': '超內控',
+        'WeightValue': 'IPQC克重',
+        'WeightLower': '重量下限',
+        'WeightUpper': '重量上限',
+        'Activation': '稼動率',
+        'OpticalNGRate': '光檢不良率'
+    }
 
     # 配置日志记录器
     logging.basicConfig(
@@ -175,7 +176,6 @@ class mes_daily_report(object):
         finally:
             attachment.close()
 
-
     def send_admin_email(self, file_list, image_buffers, data_date):
         logging.info(f"Start to send Email")
         smtp_config, to_emails, admin_emails = self.read_config('mes_daily_report_mail.config')
@@ -276,7 +276,17 @@ class mes_daily_report(object):
 
             df_final = pd.merge(df_main, df_detail, on=['Name', 'Period', 'Line'], how='left')
 
-            df_selected = df_final[['Date', 'Name', 'Line', 'Shift', 'WorkOrderId', 'PartNo', 'ProductItem', 'AQL', 'ProductionTime', 'Period', 'max_speed', 'min_speed', 'avg_speed', 'LineSpeedStd', 'sum_qty',  'Ticket_Qty', 'Separate', 'Target', 'Scrap', 'SecondGrade', 'OverControl', 'WeightValue', 'OpticalNGRate', 'WeightLower', 'WeightUpper',]]
+            # 檢查欄位 LineSpeedStd 是否有空值
+            df_filtered = df_main[df_main['Line'].notnull()]
+            isNoStandard = df_filtered['LineSpeedStd'].isnull().any()
+            if isNoStandard:
+                df_filtered = df_filtered[df_filtered['LineSpeedStd'].isnull()]
+
+            df_selected = df_final[
+                ['Date', 'Name', 'Line', 'Shift', 'WorkOrderId', 'PartNo', 'ProductItem', 'AQL', 'ProductionTime',
+                 'Period', 'max_speed', 'min_speed', 'avg_speed', 'LineSpeedStd', 'sum_qty', 'Ticket_Qty', 'Separate',
+                 'Target', 'Scrap', 'SecondGrade', 'OverControl', 'WeightValue', 'OpticalNGRate', 'WeightLower',
+                 'WeightUpper', ]]
 
             df_with_subtotals, df_chart, df_activation = self.sorting_data(db, df_selected)
             if not fix_mode:
@@ -309,7 +319,7 @@ class mes_daily_report(object):
 
         print("isCountingError Check")
         logging.info(f"isCountingError Check")
-        if self.isCountingError(report_date1, report_date2):
+        if self.isCountingError(report_date1, report_date2) or isNoStandard:
             self.send_admin_email(file_list, image_buffers, report_date1)
             print('Admin Email sent successfully')
             logging.info(f"Admin Email sent successfully")
@@ -334,15 +344,15 @@ class mes_daily_report(object):
                             break
                         time.sleep(180)  # seconds
 
-    def isCountingError(self, report_date1,report_date2):
+    def isCountingError(self, report_date1, report_date2):
         db = vnedc_database()
         sql = f"""
         SELECT *
           FROM [VNEDC].[dbo].[spiderweb_monitor_device_log] where update_at between 
            CONVERT(DATETIME, '{report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{report_date2} 05:59:59', 120) 
-           and func_name = 'COUNTING DEVICE'
-           
-           
+           and func_name = 'COUNTING DEVICE' and status_code_id = 'E01'
+
+
         """
         results = db.select_sql_dict(sql)
         if len(results) > 0:
@@ -350,8 +360,7 @@ class mes_daily_report(object):
         else:
             return False
 
-
-    def delete_mes_olap(self,report_date1,report_date2, plant):
+    def delete_mes_olap(self, report_date1, report_date2, plant):
         db = mes_olap_database()
         table_name = '[MES_OLAP].[dbo].[mes_daily_report_raw]'
         sql_delete = f"""
@@ -361,7 +370,6 @@ class mes_daily_report(object):
             OR (date = '{report_date1}' AND period BETWEEN 6 AND 23))
         """
         db.execute_sql(sql_delete)
-
 
     def insert_mes_olap(self, df):
         try:
@@ -393,7 +401,8 @@ class mes_daily_report(object):
                 WeightLower = row['WeightLower']
                 WeightUpper = row['WeightUpper']
                 ticket_qty = row['Ticket_Qty']
-                Activation = 0
+                Activation = 'null'
+                OpticalNGRate = row['OpticalNGRate']
 
                 if Date != 'null':
                     if int(Period) >= 0 and int(Period) <= 5:
@@ -404,14 +413,13 @@ class mes_daily_report(object):
                     SN = str(row['Date']).replace('-', '') + str(int(Period)).zfill(2)
                     sql = f"""insert into {table_name}(Date,Name,Line,Shift,WorkOrderId,PartNo,ProductItem,AQL,ProductionTime,
                     Period,max_speed,min_speed,avg_speed,LineSpeedStd,sum_qty,Separate,Target,Scrap,SecondGrade,OverControl,
-                    WeightValue,WeightLower,WeightUpper, Activation, update_time,SN,ticket_qty,belong_to) Values('{Date}','{Name}','{Line}',N'{Shift}','{WorkOrderId}','{PartNo}',
+                    WeightValue,WeightLower,WeightUpper, Activation, update_time,SN,ticket_qty,belong_to, OpticalNGRate) Values('{Date}','{Name}','{Line}',N'{Shift}','{WorkOrderId}','{PartNo}',
                     '{ProductItem}','{AQL}',{ProductionTime},{Period},{max_speed},{min_speed},{avg_speed},{LineSpeedStd},
-                    {sum_qty},'{Separate}',{Target},'{Scrap}','{SecondGrade}','{OverControl}',{WeightValue},{WeightLower},{WeightUpper}, {Activation}, GETDATE(),{SN},{ticket_qty},'{belong_to}')"""
+                    {sum_qty},'{Separate}',{Target},'{Scrap}','{SecondGrade}','{OverControl}',{WeightValue},{WeightLower},{WeightUpper}, {Activation}, GETDATE(),{SN},{ticket_qty},'{belong_to}', {OpticalNGRate})"""
                     # print(sql)
                     db.execute_sql(sql)
         except Exception as e:
             print(e)
-
 
     def shift(self, period):
         try:
@@ -422,7 +430,7 @@ class mes_daily_report(object):
         except Exception as ex:
             return ''
 
-       # Work Order
+    # Work Order
     def get_df_main(self, db, report_date1, report_date2, plant):
         scada_table = ""
         upper_column = ""
@@ -528,7 +536,7 @@ class mes_daily_report(object):
                   JOIN [PMGMES].[dbo].[PMG_DML_DataModelList] m on r.MachineId = m.Id
                   where ((r.InspectionDate = '{report_date1}' AND Period between 6 and 23) or (r.InspectionDate = '{report_date2}' AND Period between 0 and 5))
 			)
-			
+
             SELECT 
                 wo.MachineId,
                 mach.Name,
@@ -596,16 +604,17 @@ class mes_daily_report(object):
 
         return df_detail
 
-
     def generate_excel(self, writer, df, plant, machine_name):
         colmn_index = {'Date': 0, 'Name': 1, 'Line': 2, 'Shift': 3, 'WorkOrderId': 4, 'PartNo': 5, 'ProductItem': 6,
                        'AQL': 7, 'ProductionTime': 8, 'Period': 9, 'max_speed': 10, 'min_speed': 11,
                        'avg_speed': 12, 'LineSpeedStd': 13, 'sum_qty': 14, 'Ticket_Qty': 15, 'Separate': 16,
                        'Scrap': 17, 'SecondGrade': 18, 'OverControl': 19, 'WeightValue': 20,
                        'OpticalRate': 21, 'WeightLower': 22, 'WeightUpper': 23}
-        colmn_letter = {'Date':'A', 'Name': 'B', 'Line': 'C', 'Shift': 'D', 'WorkOrderId': 'E', 'PartNo': 'F', 'ProductItem': 'G',
-                       'AQL': 'H', 'ProductionTime': 'I', 'Period': 'J', 'max_speed': 'K', 'min_speed': 'L',
-                        'avg_speed': 'M', 'LineSpeedStd': 'N', 'sum_qty': 'O', 'Ticket_Qty': 'P', 'Separate': 'Q', 'Target': 'R',
+        colmn_letter = {'Date': 'A', 'Name': 'B', 'Line': 'C', 'Shift': 'D', 'WorkOrderId': 'E', 'PartNo': 'F',
+                        'ProductItem': 'G',
+                        'AQL': 'H', 'ProductionTime': 'I', 'Period': 'J', 'max_speed': 'K', 'min_speed': 'L',
+                        'avg_speed': 'M', 'LineSpeedStd': 'N', 'sum_qty': 'O', 'Ticket_Qty': 'P', 'Separate': 'Q',
+                        'Target': 'R',
                         'Scrap': 'S', 'SecondGrade': 'T', 'OverControl': 'U', 'WeightValue': 'V', 'OpticalRate': 'W',
                         'WeightLower': 'X', 'WeightUpper': 'Y'}
 
@@ -642,7 +651,8 @@ class mes_daily_report(object):
 
             # Set alignment
             for cell in col:
-                if col_letter in [colmn_letter['max_speed'], colmn_letter['min_speed'], colmn_letter['avg_speed'], colmn_letter['LineSpeedStd']]:  # Apply right alignment for specific columns
+                if col_letter in [colmn_letter['max_speed'], colmn_letter['min_speed'], colmn_letter['avg_speed'],
+                                  colmn_letter['LineSpeedStd']]:  # Apply right alignment for specific columns
                     cell.alignment = self.right_align_style.alignment
                 elif col_letter in [colmn_letter['sum_qty'], colmn_letter['Target']]:
                     cell.number_format = '#,##0'
@@ -666,23 +676,28 @@ class mes_daily_report(object):
                     cell.alignment = self.center_align_style.alignment
 
         for row in range(2, worksheet.max_row + 1):  # 從第2行開始，因為第1行是標題
-            weight_value_cell = worksheet[colmn_letter['WeightValue']+str(row)]
-            weight_lower_cell = worksheet[colmn_letter['WeightLower']+str(row)].value
-            weight_upper_cell = worksheet[colmn_letter['WeightUpper']+str(row)].value
+            weight_value_cell = worksheet[colmn_letter['WeightValue'] + str(row)]
+            weight_lower_cell = worksheet[colmn_letter['WeightLower'] + str(row)].value
+            weight_upper_cell = worksheet[colmn_letter['WeightUpper'] + str(row)].value
 
             if weight_lower_cell or weight_upper_cell:
-                comment = Comment(text="IPQC範圍("+weight_lower_cell+"-"+weight_upper_cell+")", author="System")  # 創建註解
+                comment = Comment(text="IPQC範圍(" + weight_lower_cell + "-" + weight_upper_cell + ")",
+                                  author="System")  # 創建註解
                 weight_value_cell.comment = comment
 
         return workbook
 
-
     def generate_summary_excel(self, writer, df):
 
         colmn_index = {'Name': 0, 'ProductItem': 1, 'AQL': 2, 'Shift': 3, 'Line': 4, 'max_speed': 5, 'min_speed': 6,
-                       'avg_speed': 7, 'LineSpeedStd': 8, 'ProductionTime': 9, 'sum_qty': 10, 'TicketQty': 11, 'Separate': 12, 'Scrap': 13, 'SecondGrade': 14, 'Target': 15, 'OverControl': 16, 'ActiveRate': 17, 'OpticalNGRate': 18, }
+                       'avg_speed': 7, 'LineSpeedStd': 8, 'ProductionTime': 9, 'sum_qty': 10, 'TicketQty': 11,
+                       'Separate': 12, 'Scrap': 13, 'SecondGrade': 14, 'Target': 15, 'OverControl': 16,
+                       'ActiveRate': 17, 'OpticalNGRate': 18, }
         colmn_letter = {'Name': 'A', 'ProductItem': 'B', 'AQL': 'C', 'Shift': 'D', 'Line': 'E',
-                       'max_speed': 'F', 'min_speed': 'G', 'avg_speed': 'H', 'LineSpeedStd': 'I', 'ProductionTime': 'J', 'sum_qty': 'K', 'TicketQty': 'L', 'Separate': 'M', 'Scrap': 'N', 'SecondGrade': 'O', 'Target': 'P', 'OverControl': 'Q', 'ActiveRate': 'R', 'OpticalNGRate': 'S', }
+                        'max_speed': 'F', 'min_speed': 'G', 'avg_speed': 'H', 'LineSpeedStd': 'I',
+                        'ProductionTime': 'J', 'sum_qty': 'K', 'TicketQty': 'L', 'Separate': 'M', 'Scrap': 'N',
+                        'SecondGrade': 'O', 'Target': 'P', 'OverControl': 'Q', 'ActiveRate': 'R',
+                        'OpticalNGRate': 'S', }
 
         # Create a bold font style
         bold_font = Font(bold=True)
@@ -713,7 +728,8 @@ class mes_daily_report(object):
                     worksheet.column_dimensions[col_letter].width = max_length + 5
                     self.left_align_style = Alignment(horizontal='left')
                     cell.alignment = self.left_align_style
-                elif col_letter in [colmn_letter['max_speed'], colmn_letter['min_speed'], colmn_letter['avg_speed'], colmn_letter['LineSpeedStd']]:  # 检查是否为指定的列
+                elif col_letter in [colmn_letter['max_speed'], colmn_letter['min_speed'], colmn_letter['avg_speed'],
+                                    colmn_letter['LineSpeedStd']]:  # 检查是否为指定的列
                     worksheet.column_dimensions[col_letter].width = 15
                     cell.alignment = self.right_align_style.alignment
                 elif col_letter in [colmn_letter['ProductionTime']]:
@@ -723,7 +739,8 @@ class mes_daily_report(object):
                     worksheet.column_dimensions[col_letter].width = 15
                     cell.alignment = self.right_align_style.alignment
                     cell.number_format = '#,##0'
-                elif col_letter in [colmn_letter['Separate'], colmn_letter['Scrap'], colmn_letter['SecondGrade'], colmn_letter['OverControl'], colmn_letter['OpticalNGRate']]:
+                elif col_letter in [colmn_letter['Separate'], colmn_letter['Scrap'], colmn_letter['SecondGrade'],
+                                    colmn_letter['OverControl'], colmn_letter['OpticalNGRate']]:
                     worksheet.column_dimensions[col_letter].width = 10
                     cell.alignment = self.center_align_style.alignment
                     cell.number_format = '0.00%'  # 百分比格式，小數點 1 位
@@ -740,7 +757,6 @@ class mes_daily_report(object):
                 else:
                     cell.alignment = self.center_align_style.alignment
 
-
         # Search all lines, bold font and bold line above
         index_start = 2
         index_end = 1
@@ -749,11 +765,10 @@ class mes_daily_report(object):
                 for cell in row[colmn_index['Line']:]:
                     cell.fill = PatternFill(start_color="FDE9D9", end_color="FDE9D9", fill_type="solid")
 
-
             if row[colmn_index['ProductItem']].value != '' and row[colmn_index['Shift']].value == '':
                 index_end += 1
 
-            if row[colmn_index['Shift']].value != '': # Shift
+            if row[colmn_index['Shift']].value != '':  # Shift
                 worksheet.row_dimensions.group(index_start, index_end, hidden=True, outline_level=2)
 
                 index_start = index_end + 1
@@ -774,6 +789,12 @@ class mes_daily_report(object):
                     cell.font = bold_font
                     cell.border = thick_border
 
+                # Add a note (comment) to the 'Optical' column
+                if str(row[colmn_index['ProductItem']].value).startswith('V S'):
+                    note_text = "Yellow Gloves."
+                    author = 'System'
+                    row[colmn_index['OpticalNGRate']].comment = Comment(note_text, author)
+
             # 設置欄的 outlineLevel 讓其可以折疊/展開
             worksheet.column_dimensions[colmn_letter['Shift']].outlineLevel = 1
             worksheet.column_dimensions[colmn_letter['Line']].outlineLevel = 1
@@ -790,7 +811,7 @@ class mes_daily_report(object):
 
     def generate_activation_excel(self, writer, df):
         colmn_letter = {'CreationTime': 'A', 'MES_MACHINE': 'B', 'A1_Qty': 'C', 'A1_Speed': 'D', 'A2_Qty': 'E',
-                        'A2_Spped': 'F', 'B1_Qty': 'G', 'B1_Speed': 'H', 'B2_Qty': 'I', 'B2_Speed': 'J',}
+                        'A2_Spped': 'F', 'B1_Qty': 'G', 'B1_Speed': 'H', 'B2_Qty': 'I', 'B2_Speed': 'J', }
         namesheet = "稼動RawData"
         # Write data to the Excel sheet with the machine name as the sheet name
         df.to_excel(writer, sheet_name=namesheet, index=False)
@@ -849,7 +870,6 @@ class mes_daily_report(object):
             # 計算 NG 的比例
             ng_ratio = ng_count / len(data_list)
             return ng_ratio
-
 
         def calculate_activation(mach):
             try:
@@ -932,12 +952,12 @@ class mes_daily_report(object):
                                       where m.MES_MACHINE = '{mach}' and m.LINE = 'B2'
                                       and CreationTime between CONVERT(DATETIME, '{report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{report_date2} 05:59:59', 120) 
                     )
-                    
+
                     Select FORMAT(A1.CreationTime, 'yyyy-MM-dd HH:mm:ss') CreationTime, A1.MES_MACHINE, A1.Qty2 A1_Qty, A1.Speed A1_Speed, A2.Qty2 A2_Qty, A2.Speed A2_Spped, B1.Qty2 B1_Qty, B1.Speed B1_Speed, B2.Qty2 B2_Qty, B2.Speed B2_Speed from A1 
                     left join A2 on A1.CreationTime = A2.CreationTime
                     join B1 on A1.CreationTime = B1.CreationTime
                     left join B2 on A1.CreationTime = B2.CreationTime
-                
+
                 """
                 detail_raws = db.select_sql_dict(sql)
 
@@ -950,7 +970,6 @@ class mes_daily_report(object):
                 return round(active_rate, 2), df
             except Exception as e:
                 print(e)
-
 
         try:
             # Drop the 'Period' and 'Date' column from each group
@@ -1012,7 +1031,7 @@ class mes_daily_report(object):
                     # Second Grade
                     line_sum_qty = line_group['sum_qty'].sum()
                     line_secondGrade_qty = line_group['SecondGrade'].sum()
-                    line_second_rate = round(float(line_secondGrade_qty) / line_sum_qty, 3)
+                    line_second_rate = round(float(line_secondGrade_qty) / line_sum_qty, 3) if line_sum_qty > 0 else 0
 
                     line_scrap_qty = line_group['Scrap'].sum()
                     line_scrap_rate = round(float(line_scrap_qty) / line_sum_qty, 3) if line_sum_qty > 0 else 0
@@ -1144,7 +1163,7 @@ class mes_daily_report(object):
                     'min_speed': mach_group['min_speed'].min(),
                     'avg_speed': mach_group['avg_speed'].mean(),
                     'LineSpeedStd': mean_speed,
-                    'ProductionTime': day_production_time+night_production_time,
+                    'ProductionTime': day_production_time + night_production_time,
                     'sum_qty': sum_qty,
                     'Ticket_Qty': mach_group['Ticket_Qty'].sum(),
                     'Separate': counting_ng_ratio(mach_group['Separate']),
@@ -1159,7 +1178,6 @@ class mes_daily_report(object):
                 subtotal_df['avg_speed'] = subtotal_df['avg_speed'].round(0)
                 rows.append(subtotal_df)  # Machine total summary
                 chart_rows.append(subtotal_df)
-
 
             # Combine the grouped data into a DataFrame
             df_with_subtotals = pd.concat(rows, ignore_index=True)
@@ -1195,7 +1213,8 @@ class mes_daily_report(object):
         # Draw Bar Chart
         bar_width = 0.6
         bars = ax1.bar(df_chart['Name_short'], df_chart['sum_qty'], width=bar_width, color='lightcoral', label='日目標達成率')
-        ax1.bar(df_chart['Name_short'], df_chart['Unfinished'], width=bar_width, bottom=df_chart['sum_qty'], color='lightgreen')
+        ax1.bar(df_chart['Name_short'], df_chart['Unfinished'], width=bar_width, bottom=df_chart['sum_qty'],
+                color='lightgreen')
 
         # Create a second Y axis
         # ax2 = ax1.twinx()
@@ -1244,55 +1263,10 @@ class mes_daily_report(object):
 
         return image_stream
 
-    # def generate_chart(self, save_path, plant, report_date, df_chart):
-    #     # Create Chart
-    #     fig, ax1 = plt.subplots()
-    #
-    #     # Only substring Name right 3 characters
-    #     df_chart['Name_short'] = df_chart['Name'].apply(lambda x: x[-3:])
-    #
-    #     # Draw Bar Chart
-    #     bars = ax1.bar(df_chart['Name_short'], df_chart['sum_qty'])
-    #
-    #     # Display quantity above each bar
-    #     for bar in bars:
-    #         yval = bar.get_height()  # 获取条形的高度，也就是数量
-    #         ax1.text(bar.get_x() + bar.get_width() / 2, yval, f'{int(yval):,}',
-    #                  ha='center', va='bottom')  # 显示数量并居中
-    #
-    #     # Create a second Y axis
-    #     ax2 = ax1.twinx()
-    #
-    #     # Draw Line Chart (speed)
-    #     ax2.plot(df_chart['Name_short'], df_chart['avg_speed'], color='red', marker='o')
-    #
-    #
-    #     # Set the X-axis label and the Y-axis label
-    #     ax1.set_xlabel('Machine')
-    #     ax1.set_ylabel('Output')
-    #     ax2.set_ylabel('Average Speed', color='red')
-    #     plt.title(f'{plant} Sum Quantity per Machine')
-    #
-    #     # Display the legend of the bar chart and line chart together
-    #     fig.legend(loc="upper right", bbox_to_anchor=(1, 1), bbox_transform=ax1.transAxes)
-    #
-    #     # Save the image to a local file
-    #     image_file = f'{plant}_bar_chart_{report_date}.png'
-    #     image_file = os.path.join(save_path, image_file)
-    #
-    #     plt.savefig(image_file)
-    #
-    #     # Save the image to a BytesIO object
-    #     image_stream = BytesIO()
-    #     plt.savefig(image_stream, format='png')
-    #     image_stream.seek(0)  # Move the pointer to the beginning of the file
-    #     plt.close()  # Close the image to free up memory
-    #
-    #     return image_stream
 
 from datetime import datetime, timedelta, date
-fix_mode = False
 
+fix_mode = False
 
 if fix_mode:
     start_date = date(2024, 11, 1)
@@ -1300,7 +1274,6 @@ if fix_mode:
 
     current_date = start_date
     while current_date <= end_date:
-
         report_date1 = current_date
         report_date2 = report_date1 + timedelta(days=1)
 
@@ -1316,8 +1289,8 @@ else:
     report_date2 = datetime.today()
     report_date2 = report_date2.strftime('%Y%m%d')
 
-    #report_date1 = "20241031"
-    #report_date2 = "20241101"
+    # report_date1 = "20241031"
+    # report_date2 = "20241101"
 
     report = mes_daily_report(report_date1, report_date2)
     report.main(fix_mode)
