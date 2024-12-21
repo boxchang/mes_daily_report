@@ -59,7 +59,9 @@ class mes_daily_report(object):
         'WeightLower': '重量下限',
         'WeightUpper': '重量上限',
         'Activation': '稼動率',
-        'OpticalNGRate': '光檢不良率'
+        'OpticalNGRate': '光檢不良率',
+        'WoStartDate': '工單開始時間',
+        'WoEndDate': '工單結束時間'
     }
 
     # 配置日志记录器
@@ -284,7 +286,7 @@ class mes_daily_report(object):
                 ['Date', 'Name', 'Line', 'Shift', 'WorkOrderId', 'PartNo', 'ProductItem', 'AQL', 'ProductionTime',
                  'Period', 'max_speed', 'min_speed', 'avg_speed', 'LineSpeedStd', 'sum_qty', 'Ticket_Qty', 'Separate',
                  'Target', 'Scrap', 'SecondGrade', 'OverControl', 'WeightValue', 'OpticalNGRate', 'WeightLower',
-                 'WeightUpper', ]]
+                 'WeightUpper', 'WoStartDate', 'WoEndDate', ]]
 
             df_with_subtotals, df_chart, df_activation = self.sorting_data(db, df_selected)
 
@@ -484,7 +486,7 @@ class mes_daily_report(object):
                     JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] m ON dl.Name = m.MES_MACHINE AND wi.LineId = m.LINE
                 WHERE 
                     ((r.InspectionDate = '{report_date1}' AND Period between 6 and 23) or (r.InspectionDate = '{report_date2}' AND Period between 0 and 5))
-                    AND ipqc.OptionName = 'Cuff'
+                    AND ipqc.OptionName = 'Weight'
                     AND dl.Name LIKE '%{plant}%' AND COUNTING_MACHINE LIKE '%CountingMachine%'
             ),
             CountingData AS (
@@ -572,7 +574,9 @@ class mes_daily_report(object):
 				CAST(round(weight_lower,2) AS DECIMAL(10, 2)) WeightLower,
 				CAST(round(weight_upper,2) AS DECIMAL(10, 2)) WeightUpper,
                 runcard,
-                t.ActualQty Ticket_Qty
+                t.ActualQty Ticket_Qty,
+                wo.StartDate WoStartDate, 
+                wo.EndDate WoEndDate
             FROM 
                 Machines mach
                 LEFT JOIN WorkOrderInfo wo ON mach.Name = wo.Name
@@ -616,14 +620,14 @@ class mes_daily_report(object):
                        'AQL': 7, 'ProductionTime': 8, 'Period': 9, 'max_speed': 10, 'min_speed': 11,
                        'avg_speed': 12, 'LineSpeedStd': 13, 'sum_qty': 14, 'Ticket_Qty': 15, 'Separate': 16,
                        'Scrap': 17, 'SecondGrade': 18, 'OverControl': 19, 'WeightValue': 20,
-                       'OpticalRate': 21, 'WeightLower': 22, 'WeightUpper': 23}
+                       'OpticalRate': 21, 'WeightLower': 22, 'WeightUpper': 23, 'WoStartDate': 24, 'WoEndDate': 25}
         colmn_letter = {'Date': 'A', 'Name': 'B', 'Line': 'C', 'Shift': 'D', 'WorkOrderId': 'E', 'PartNo': 'F',
                         'ProductItem': 'G',
                         'AQL': 'H', 'ProductionTime': 'I', 'Period': 'J', 'max_speed': 'K', 'min_speed': 'L',
                         'avg_speed': 'M', 'LineSpeedStd': 'N', 'sum_qty': 'O', 'Ticket_Qty': 'P', 'Separate': 'Q',
                         'Target': 'R',
                         'Scrap': 'S', 'SecondGrade': 'T', 'OverControl': 'U', 'WeightValue': 'V', 'OpticalRate': 'W',
-                        'WeightLower': 'X', 'WeightUpper': 'Y'}
+                        'WeightLower': 'X', 'WeightUpper': 'Y', 'WoStartDate': 'Z', 'WoEndDate': 'AA'}
 
         # 轉出Excel前進行資料處理
         df['ProductionTime'] = (df['ProductionTime'] // 60).astype(str) + 'H'
@@ -678,6 +682,10 @@ class mes_daily_report(object):
                 elif col_letter in [colmn_letter['Ticket_Qty']]:
                     cell.number_format = '#,##0'
                     cell.alignment = self.right_align_style.alignment
+                    worksheet.column_dimensions[col_letter].hidden = True
+                elif col_letter in [colmn_letter['WoStartDate'], colmn_letter['WoEndDate']]:
+                    cell.alignment = self.center_align_style.alignment
+                    cell.number_format = 'yyyy/mm/dd hh:mm:ss'
                     worksheet.column_dimensions[col_letter].hidden = True
                 else:
                     cell.alignment = self.center_align_style.alignment
@@ -880,55 +888,7 @@ class mes_daily_report(object):
 
         def calculate_activation(mach):
             try:
-                # 用IPQC的報工反推生產工單，再從工單的 StartDate與EndDate去算出稼動率 - SCADA車速為0的時間
-                # StartDate若為小於 2024-10-10 06:30:00 則以 2024-10-10 06:00:00 計算，以30分鐘為準備期間
-                # EndDate若為超過 2024-10-11 05:59:59 則以 2024-10-11 05:59:59 計算
-                sql = f"""
-                    WITH IPQC_WO AS (
-                    SELECT distinct w.Id,name
-                      FROM [PMGMES].[dbo].[PMG_MES_WorkOrder] w 
-                      JOIN [dbo].[PMG_DML_DataModelList] dl on w.MachineId = dl.Id
-                      JOIN [dbo].[PMG_MES_RunCard] r on r.WorkOrderId = w.Id
-                      JOIN [dbo].[PMG_MES_IPQCInspectingRecord] ipqc on ipqc.RunCardId = r.Id
-                      where ((r.InspectionDate = '{report_date1}' AND Period between 6 and 23) or (r.InspectionDate = '{report_date2}' AND Period between 0 and 5))
-                      and name = '{mach}'
-                    )
-                    Select CASE 
-                            WHEN DATEDIFF(minute, CAST(StartDate AS DATETIME), CONVERT(DATETIME, '{report_date1} 06:30:00', 120)) < 30 
-                            THEN CONVERT(DATETIME, '{report_date1} 06:00:00', 120) 
-                            WHEN DATEDIFF(minute, CONVERT(DATETIME, '{report_date1} 06:00:00', 120), CAST(StartDate AS DATETIME)) < 0 
-                            THEN CONVERT(DATETIME, '{report_date1} 06:00:00', 120)
-                            ELSE StartDate 
-                        END AS StartDate,
-                        CASE 
-                            WHEN DATEDIFF(minute, CONVERT(DATETIME, '{report_date2} 06:30:00', 120),CAST(EndDate AS DATETIME)) > 30 
-                            THEN EndDate
-                            ELSE CONVERT(DATETIME, '{report_date2} 06:00:00', 120) 
-                        END AS EndDate
-                        from (
-                    select name,min(StartDate) StartDate,max(EndDate) EndDate from [PMGMES].[dbo].[PMG_MES_WorkOrder] w 
-                    JOIN IPQC_WO i on w.Id = i.Id
-                    group by name
-                    ) A
-                """
-                detail_raws = db.select_sql_dict(sql)
-                print(sql)
-                if detail_raws[0]["StartDate"] == None:
-                    mach_start_date = f"{report_date1} 06:00:00"
-                else:
-                    mach_start_date = str(detail_raws[0]["StartDate"][:-8]).replace('-', '')
-
-                if detail_raws[0]["EndDate"] == None:
-                    mach_end_date = f"{report_date2} 06:00:00"
-                else:
-                    mach_end_date = str(detail_raws[0]["EndDate"][:-8]).replace('-', '')
-
-                start_date = datetime.strptime(mach_start_date, '%Y%m%d %H:%M:%S')
-                end_date = datetime.strptime(mach_end_date, '%Y%m%d %H:%M:%S')
-                time_difference = end_date - start_date
-                wo_time = time_difference.total_seconds()  # 工單預計作業時間
-                if wo_time > 86400:
-                    wo_time = 86400
+                wo_time = 86400
 
                 sql = f"""
                     WITH A1 AS (
@@ -1274,13 +1234,38 @@ class mes_daily_report(object):
         return image_stream
 
 
+import argparse
 from datetime import datetime, timedelta, date
 
-fix_mode = False
+parser = argparse.ArgumentParser(description="解析外部参数")
+
+parser.add_argument("--fix_mode", action="store_true", help="是否启用修复模式")
+parser.add_argument("--start_date", type=str, default=None, help="开始日期 (格式: YYYYMMDD)")
+parser.add_argument("--end_date", type=str, default=None, help="结束日期 (格式: YYYYMMDD)")
+
+args = parser.parse_args()
+
+if (args.start_date or args.end_date) and not args.fix_mode:
+    parser.error("如果提供了 --start_date 或 --end_date，必须启用 --fix_mode")
+
+print(f"fix_mode: {args.fix_mode}")
+print(f"start_date: {args.start_date}")
+print(f"end_date: {args.end_date}")
+
+if args.start_date:
+    start_date = datetime.strptime(args.start_date, "%Y%m%d")
+    print(f"开始日期: {start_date}")
+if args.end_date:
+    end_date = datetime.strptime(args.end_date, "%Y%m%d")
+    print(f"结束日期: {end_date}")
+
+fix_mode = args.fix_mode
 
 if fix_mode:
-    start_date = date(2024, 11, 4)
-    end_date = date(2024, 11, 5)
+    start_date = datetime.strptime(args.start_date, "%Y%m%d") if args.start_date else datetime.today()-timedelta(days=1)
+    end_date = datetime.strptime(args.end_date, "%Y%m%d") if args.end_date else datetime.today()-timedelta(days=1)
+    # start_date = date(2024, 11, 4)
+    # end_date = date(2024, 11, 5)
 
     current_date = start_date
     while current_date <= end_date:
