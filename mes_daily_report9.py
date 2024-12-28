@@ -241,7 +241,7 @@ class mes_daily_report(object):
             # 發送郵件（不進行密碼驗證）
             server = smtplib.SMTP(smtp_server, smtp_port)
             server.ehlo()  # 啟動與伺服器的對話
-            server.sendmail(smtp_user, to_emails, msg.as_string())
+            server.sendmail(smtp_user, admin_emails, msg.as_string())
             print("Sent Email Successfully")
         except Exception as e:
             print(f"Sent Email Fail: {e}")
@@ -324,9 +324,10 @@ class mes_daily_report(object):
         print("isCountingError Check")
         logging.info(f"isCountingError Check")
         if self.isCountingError(report_date1, report_date2) or isNoStandard or has_greater_than_24:
-            self.send_admin_email(file_list, image_buffers, report_date1)
-            print('Admin Email sent successfully')
-            logging.info(f"Admin Email sent successfully")
+            if not fix_mode:
+                self.send_admin_email(file_list, image_buffers, report_date1)
+                print('Admin Email sent successfully')
+                logging.info(f"Admin Email sent successfully")
         else:
             # Send Email
             if not fix_mode:
@@ -474,7 +475,8 @@ class mes_daily_report(object):
 					ipqc.Lower_InspectionValue weight_lower,
 					ipqc.Upper_InspectionValue weight_upper,
 					hole.InspectionStatus hole_result,
-					r.Id runcard
+					r.Id runcard,
+					r.InspectionDate
                 FROM 
                     [PMGMES].[dbo].[PMG_MES_WorkOrderInfo] wi
                     JOIN [PMGMES].[dbo].[PMG_MES_WorkOrder] w ON wi.WorkOrderId = w.id
@@ -576,7 +578,8 @@ class mes_daily_report(object):
                 runcard,
                 t.ActualQty Ticket_Qty,
                 wo.StartDate WoStartDate, 
-                wo.EndDate WoEndDate
+                wo.EndDate WoEndDate,
+				wo.InspectionDate AS Date
             FROM 
                 Machines mach
                 LEFT JOIN WorkOrderInfo wo ON mach.Name = wo.Name
@@ -603,7 +606,7 @@ class mes_daily_report(object):
     def get_df_detail(self, db, report_date1, report_date2, plant):
 
         sql = f"""
-                        SELECT FORMAT(CreationTime, 'yyyy-MM-dd') AS Date,CAST(DATEPART(hour, CreationTime) as INT) Period ,m.mes_machine Name,m.line Line, max(Speed) max_speed,min(Speed) min_speed,round(avg(Speed),0) avg_speed,sum(Qty2) sum_qty
+                        SELECT FORMAT(CreationTime, 'yyyy-MM-dd') AS CountingDate,CAST(DATEPART(hour, CreationTime) as INT) Period ,m.mes_machine Name,m.line Line, max(Speed) max_speed,min(Speed) min_speed,round(avg(Speed),0) avg_speed,sum(Qty2) sum_qty
                           FROM [PMG_DEVICE].[dbo].[COUNTING_DATA] c, [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] m
                           where CreationTime between CONVERT(DATETIME, '{report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{report_date2} 05:59:59', 120)
                           and c.MachineName = m.counting_machine and m.mes_machine like '%{plant}%'
@@ -819,8 +822,14 @@ class mes_daily_report(object):
             # 總共折疊的區域
             worksheet.column_dimensions.group(colmn_letter['Shift'], colmn_letter['min_speed'], hidden=True)
 
-        # 稼動率說明
-        worksheet[colmn_letter['ActiveRate']+"1"].comment = Comment(text="點數機(A1B1)生產時間/工單預計生產時間", author="System")
+        # Header說明
+        comment = Comment(text="點數機(A1B1)生產時間/工單預計生產時間", author="System")
+        comment.width = 600
+        worksheet[colmn_letter['ActiveRate']+"1"].comment = comment
+        comment = Comment(text="(標準上限+標準下限)/2", author="System")
+        comment.width = 200
+        worksheet[colmn_letter['LineSpeedStd'] + "1"].comment = comment
+
 
         return workbook
 
@@ -929,10 +938,8 @@ class mes_daily_report(object):
                 detail_raws = db.select_sql_dict(sql)
 
                 df = pd.DataFrame(detail_raws)
-                filtered_df = df[(df['A1_Qty'] <= 10) | (df['B1_Qty'] <= 10)]
-
-                stop_time = len(filtered_df) * 300
-                run_time = int(wo_time) - int(stop_time)
+                filtered_df = df[(df['A1_Qty'] > 10) | (df['B1_Qty'] > 10)]
+                run_time = len(filtered_df) * 300
                 active_rate = run_time / wo_time
                 return round(active_rate, 2), df
             except Exception as e:
@@ -992,8 +999,7 @@ class mes_daily_report(object):
                     # # Add AQL Column to fit format
                     # line_sum_df.insert(line_sum_df.columns.get_loc('Name') + 1, 'ProductItem', None)
                     # line_sum_df.insert(line_sum_df.columns.get_loc('Name') + 2, 'AQL', None)
-                    mean_speed = line_group['LineSpeedStd'].mean()
-                    mean_speed = round(float(mean_speed), 1) if not pd.isna(mean_speed) else 0
+
 
                     # Second Grade
                     line_sum_qty = line_group['sum_qty'].sum()
@@ -1012,7 +1018,7 @@ class mes_daily_report(object):
                         'max_speed': line_group['max_speed'].max(),
                         'min_speed': line_group['min_speed'].min(),
                         'avg_speed': line_group['avg_speed'].mean(),
-                        'LineSpeedStd': mean_speed,
+                        'LineSpeedStd': join_values(line_group['LineSpeedStd']),
                         'ProductionTime': min2hour(line_group['ProductionTime']),
                         'sum_qty': line_group['sum_qty'].sum(),
                         'Ticket_Qty': line_group['Ticket_Qty'].sum(),
@@ -1036,9 +1042,6 @@ class mes_daily_report(object):
                 if not day_df.empty:
                     day_df = day_df.copy()
 
-                    mean_speed = day_df['LineSpeedStd'].mean()
-                    mean_speed = round(float(mean_speed), 1) if not pd.isna(mean_speed) else 0
-
                     subtotal = {
                         'Name': '',
                         'ProductItem': '',
@@ -1048,7 +1051,7 @@ class mes_daily_report(object):
                         'max_speed': day_df['max_speed'].max(),
                         'min_speed': day_df['min_speed'].min(),
                         'avg_speed': day_df['avg_speed'].mean(),
-                        'LineSpeedStd': mean_speed,
+                        'LineSpeedStd': join_values(day_df['LineSpeedStd']),
                         'ProductionTime': day_df['ProductionTime'].mean(),
                         'sum_qty': day_df['sum_qty'].sum(),
                         'Ticket_Qty': day_df['Ticket_Qty'].sum(),
@@ -1075,9 +1078,6 @@ class mes_daily_report(object):
                 if not night_df.empty:
                     night_df = night_df.copy()
 
-                    mean_speed = night_df['LineSpeedStd'].mean()
-                    mean_speed = round(float(mean_speed), 1) if not pd.isna(mean_speed) else 0
-
                     subtotal = {
                         'Name': '',
                         'ProductItem': '',
@@ -1087,7 +1087,7 @@ class mes_daily_report(object):
                         'max_speed': night_df['max_speed'].max(),
                         'min_speed': night_df['min_speed'].min(),
                         'avg_speed': night_df['avg_speed'].mean(),
-                        'LineSpeedStd': mean_speed,
+                        'LineSpeedStd': join_values(night_df['LineSpeedStd']),
                         'ProductionTime': night_df['ProductionTime'].mean(),
                         'sum_qty': night_df['sum_qty'].sum(),
                         'Ticket_Qty': night_df['Ticket_Qty'].sum(),
@@ -1110,9 +1110,6 @@ class mes_daily_report(object):
                         night_production_time = night_df['ProductionTime'].mean()
 
                 # Machine total summary
-                mean_speed = mach_group['LineSpeedStd'].mean()
-                mean_speed = round(float(mean_speed), 1) if not pd.isna(mean_speed) else 0
-
                 activation_rate, df_activation_row = calculate_activation(mach_name)
 
                 # Second Grade
@@ -1132,7 +1129,7 @@ class mes_daily_report(object):
                     'max_speed': mach_group['max_speed'].max(),
                     'min_speed': mach_group['min_speed'].min(),
                     'avg_speed': mach_group['avg_speed'].mean(),
-                    'LineSpeedStd': mean_speed,
+                    'LineSpeedStd': join_values(mach_group['LineSpeedStd']),
                     'ProductionTime': day_production_time + night_production_time,
                     'sum_qty': sum_qty,
                     'Ticket_Qty': mach_group['Ticket_Qty'].sum(),
