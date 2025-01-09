@@ -108,7 +108,7 @@ class mes_daily_report(object):
 
         return smtp_config, to_emails, admin_emails
 
-    def send_email(self, file_list, image_buffers, data_date):
+    def send_email(self, file_list, image_buffers, data_date, error_msg):
         logging.info(f"Start to send Email")
         smtp_config, to_emails, admin_emails = self.read_config('mes_daily_report_mail.config')
 
@@ -178,7 +178,7 @@ class mes_daily_report(object):
         finally:
             attachment.close()
 
-    def send_admin_email(self, file_list, image_buffers, data_date):
+    def send_admin_email(self, file_list, image_buffers, data_date, error_msg):
         logging.info(f"Start to send Email")
         smtp_config, to_emails, admin_emails = self.read_config('mes_daily_report_mail.config')
 
@@ -199,7 +199,7 @@ class mes_daily_report(object):
         html = f"""\
                 <html>
                   <body>
-                  {data_date} 報表數據異常, 報表取消派送給相關人員<br>
+                  {error_msg}
                 """
         for i in range(len(image_buffers)):
             html += f'<img src="cid:chart_image{i}"><br>'
@@ -255,6 +255,8 @@ class mes_daily_report(object):
         db = mes_database()
 
         file_list = []
+        error_list = []
+        error_msg = ""
 
         # Email Attachment
         image_buffers = []
@@ -314,6 +316,9 @@ class mes_daily_report(object):
             image_buffer = self.generate_chart(save_path, plant, report_date1, df_chart)
             image_buffers.append(image_buffer)
 
+            if isNoStandard:
+                error_list.append(f"{machine_name}有品項尚未維護標準值，無法計算目標產量")
+
             logging.info(f"{plant} save raw data")
             try:
                 self.delete_mes_olap(report_date1, report_date2, plant)
@@ -323,9 +328,16 @@ class mes_daily_report(object):
 
         print("isCountingError Check")
         logging.info(f"isCountingError Check")
-        if self.isCountingError(report_date1, report_date2) or isNoStandard or has_greater_than_24:
+
+        isCountingErrorResult, error_device = self.isCountingError(report_date1, report_date2)
+        if isCountingErrorResult:
+            for device in error_device:
+                error_list.append(f"{device}點數機資料異常")
+        error_msg = '<br>'.join(error_list)
+
+        if isCountingErrorResult or isNoStandard or has_greater_than_24:
             if not fix_mode:
-                self.send_admin_email(file_list, image_buffers, report_date1)
+                self.send_admin_email(file_list, image_buffers, report_date1, error_msg)
                 print('Admin Email sent successfully')
                 logging.info(f"Admin Email sent successfully")
         else:
@@ -335,7 +347,7 @@ class mes_daily_report(object):
                 reSent = 0
                 while reSent < max_reSend:
                     try:
-                        self.send_email(file_list, image_buffers, report_date1)
+                        self.send_email(file_list, image_buffers, report_date1, error_msg)
                         print('Email sent successfully')
                         logging.info(f"Email sent successfully")
                         break
@@ -350,20 +362,26 @@ class mes_daily_report(object):
                         time.sleep(180)  # seconds
 
     def isCountingError(self, report_date1, report_date2):
+        result = False
+        error_device = []
         db = vnedc_database()
         sql = f"""
-        SELECT *
-          FROM [VNEDC].[dbo].[spiderweb_monitor_device_log] where update_at between 
-           CONVERT(DATETIME, '{report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{report_date2} 05:59:59', 120) 
-           and func_name = 'COUNTING DEVICE' and status_code_id = 'E01'
-
-
+        SELECT distinct device_group 
+          FROM [VNEDC].[dbo].[spiderweb_monitor_device_log] lg
+          JOIN [dbo].[spiderweb_monitor_device_list] ls on lg.device_id = ls.id
+          where lg.update_at between CONVERT(DATETIME, '{report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{report_date2} 05:59:59', 120) 
+          and func_name = 'COUNTING DEVICE' and status_code_id = 'E01'
         """
-        results = db.select_sql_dict(sql)
-        if len(results) > 0:
-            return True
+        rows = db.select_sql_dict(sql)
+
+        if len(rows) > 0:
+            for row in rows:
+                error_device.append(row['device_group'])
+            result = True
         else:
-            return False
+            result = False
+
+        return result, error_device
 
     def delete_mes_olap(self, report_date1, report_date2, plant):
         db = mes_olap_database()
