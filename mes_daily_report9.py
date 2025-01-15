@@ -48,6 +48,7 @@ class mes_daily_report(object):
         'avg_speed': '車速(平均)',
         'sum_qty': '產量(加總)',
         'Ticket_Qty': '入庫量(加總)',
+        'Good_Qty': '入庫良品量(加總)',
         'ProductionTime': '生產時間',
         'LineSpeedStd': '標準車速',
         'Target': '目標產能',
@@ -286,7 +287,7 @@ class mes_daily_report(object):
 
             df_selected = df_final[
                 ['Date', 'Name', 'Line', 'Shift', 'WorkOrderId', 'PartNo', 'ProductItem', 'AQL', 'ProductionTime',
-                 'Period', 'max_speed', 'min_speed', 'avg_speed', 'LineSpeedStd', 'sum_qty', 'Ticket_Qty', 'Separate',
+                 'Period', 'max_speed', 'min_speed', 'avg_speed', 'LineSpeedStd', 'sum_qty', 'Ticket_Qty', 'Good_Qty', 'Separate',
                  'Target', 'Scrap', 'SecondGrade', 'OverControl', 'WeightValue', 'OpticalNGRate', 'WeightLower',
                  'WeightUpper', 'WoStartDate', 'WoEndDate', ]]
 
@@ -424,6 +425,7 @@ class mes_daily_report(object):
                 WeightLower = row['WeightLower']
                 WeightUpper = row['WeightUpper']
                 ticket_qty = row['Ticket_Qty']
+                good_qty = row['Good_Qty']
                 Activation = 'null'
                 OpticalNGRate = row['OpticalNGRate']
 
@@ -436,9 +438,9 @@ class mes_daily_report(object):
                     SN = str(row['Date']).replace('-', '') + str(int(Period)).zfill(2)
                     sql = f"""insert into {table_name}(Date,Name,Line,Shift,WorkOrderId,PartNo,ProductItem,AQL,ProductionTime,
                     Period,max_speed,min_speed,avg_speed,LineSpeedStd,sum_qty,Separate,Target,Scrap,SecondGrade,OverControl,
-                    WeightValue,WeightLower,WeightUpper, Activation, update_time,SN,ticket_qty,belong_to, OpticalNGRate) Values('{Date}','{Name}','{Line}',N'{Shift}','{WorkOrderId}','{PartNo}',
+                    WeightValue,WeightLower,WeightUpper, Activation, update_time,SN,ticket_qty,belong_to, OpticalNGRate, good_qty) Values('{Date}','{Name}','{Line}',N'{Shift}','{WorkOrderId}','{PartNo}',
                     '{ProductItem}','{AQL}',{ProductionTime},{Period},{max_speed},{min_speed},{avg_speed},{LineSpeedStd},
-                    {sum_qty},'{Separate}',{Target},'{Scrap}','{SecondGrade}','{OverControl}',{WeightValue},{WeightLower},{WeightUpper}, {Activation}, GETDATE(),{SN},{ticket_qty},'{belong_to}', {OpticalNGRate})"""
+                    {sum_qty},'{Separate}',{Target},'{Scrap}','{SecondGrade}','{OverControl}',{WeightValue},{WeightLower},{WeightUpper}, {Activation}, GETDATE(),{SN},{ticket_qty},'{belong_to}', {OpticalNGRate}, {good_qty})"""
                     # print(sql)
                     db.execute_sql(sql)
         except Exception as e:
@@ -564,6 +566,12 @@ class mes_daily_report(object):
 				SELECT RunCardId,sum(ActualQty) ActualQty from [PMGMES].[dbo].[PMG_MES_WorkInProcess] wip
 				JOIN WorkOrderInfo w on w.runcard = wip.RunCardId
 				group by RunCardId
+			),
+			GoodStock as (
+				SELECT RunCardId,sum(ActualQty) ActualQty from [PMGMES].[dbo].[PMG_MES_WorkInProcess] wip
+				JOIN WorkOrderInfo w on w.runcard = wip.RunCardId
+				AND PackingType = 'OnlinePacking'
+				group by RunCardId
 			)
 
             SELECT 
@@ -595,6 +603,7 @@ class mes_daily_report(object):
 				CAST(round(weight_upper,2) AS DECIMAL(10, 2)) WeightUpper,
                 runcard,
                 t.ActualQty Ticket_Qty,
+                gs.ActualQty Good_Qty,
                 wo.StartDate WoStartDate, 
                 wo.EndDate WoEndDate,
 				wo.InspectionDate AS Date
@@ -606,6 +615,7 @@ class mes_daily_report(object):
                 LEFT JOIN Faulty f ON wo.runcard = f.runcardId
                 LEFT JOIN Scrap s ON wo.runcard = s.runcardId
                 LEFT JOIN WorkInProcess t on wo.runcard = t.RunCardId
+                LEFT JOIN GoodStock gs on wo.runcard = gs.RunCardId
             ORDER BY 
                 mach.Name, 
                 wo.Period, 
@@ -639,16 +649,16 @@ class mes_daily_report(object):
     def generate_excel(self, writer, df, plant, machine_name):
         colmn_index = {'Date': 0, 'Name': 1, 'Line': 2, 'Shift': 3, 'WorkOrderId': 4, 'PartNo': 5, 'ProductItem': 6,
                        'AQL': 7, 'ProductionTime': 8, 'Period': 9, 'max_speed': 10, 'min_speed': 11,
-                       'avg_speed': 12, 'LineSpeedStd': 13, 'sum_qty': 14, 'Ticket_Qty': 15, 'Separate': 16,
-                       'Scrap': 17, 'SecondGrade': 18, 'OverControl': 19, 'WeightValue': 20,
-                       'OpticalRate': 21, 'WeightLower': 22, 'WeightUpper': 23, 'WoStartDate': 24, 'WoEndDate': 25}
+                       'avg_speed': 12, 'LineSpeedStd': 13, 'sum_qty': 14, 'Ticket_Qty': 15, 'Good_Qty': 16, 'Separate': 17,
+                       'Scrap': 18, 'SecondGrade': 19, 'OverControl': 20, 'WeightValue': 21,
+                       'OpticalRate': 22, 'WeightLower': 23, 'WeightUpper': 24, 'WoStartDate': 25, 'WoEndDate': 26}
         colmn_letter = {'Date': 'A', 'Name': 'B', 'Line': 'C', 'Shift': 'D', 'WorkOrderId': 'E', 'PartNo': 'F',
                         'ProductItem': 'G',
                         'AQL': 'H', 'ProductionTime': 'I', 'Period': 'J', 'max_speed': 'K', 'min_speed': 'L',
-                        'avg_speed': 'M', 'LineSpeedStd': 'N', 'sum_qty': 'O', 'Ticket_Qty': 'P', 'Separate': 'Q',
-                        'Target': 'R',
-                        'Scrap': 'S', 'SecondGrade': 'T', 'OverControl': 'U', 'WeightValue': 'V', 'OpticalRate': 'W',
-                        'WeightLower': 'X', 'WeightUpper': 'Y', 'WoStartDate': 'Z', 'WoEndDate': 'AA'}
+                        'avg_speed': 'M', 'LineSpeedStd': 'N', 'sum_qty': 'O', 'Ticket_Qty': 'P', 'Good_Qty': 'Q',
+                        'Separate': 'R', 'Target': 'S',
+                        'Scrap': 'T', 'SecondGrade': 'U', 'OverControl': 'V', 'WeightValue': 'W', 'OpticalRate': 'X',
+                        'WeightLower': 'Y', 'WeightUpper': 'Z', 'WoStartDate': 'AA', 'WoEndDate': 'AB'}
 
         # 轉出Excel前進行資料處理
         df['ProductionTime'] = (df['ProductionTime'] // 60).astype(str) + 'H'
@@ -700,7 +710,7 @@ class mes_daily_report(object):
                     cell.number_format = '0.0%'
                 elif col_letter in [colmn_letter['WeightLower'], colmn_letter['WeightUpper']]:
                     worksheet.column_dimensions[col_letter].hidden = True
-                elif col_letter in [colmn_letter['Ticket_Qty']]:
+                elif col_letter in [colmn_letter['Ticket_Qty'], colmn_letter['Good_Qty']]:
                     cell.number_format = '#,##0'
                     cell.alignment = self.right_align_style.alignment
                     worksheet.column_dimensions[col_letter].hidden = True
@@ -726,14 +736,14 @@ class mes_daily_report(object):
     def generate_summary_excel(self, writer, df):
 
         colmn_index = {'Name': 0, 'ProductItem': 1, 'AQL': 2, 'Shift': 3, 'Line': 4, 'max_speed': 5, 'min_speed': 6,
-                       'avg_speed': 7, 'LineSpeedStd': 8, 'ProductionTime': 9, 'sum_qty': 10, 'TicketQty': 11,
-                       'Separate': 12, 'Scrap': 13, 'SecondGrade': 14, 'Target': 15, 'OverControl': 16,
-                       'ActiveRate': 17, 'OpticalNGRate': 18, }
+                       'avg_speed': 7, 'LineSpeedStd': 8, 'ProductionTime': 9, 'sum_qty': 10, 'TicketQty': 11, 'Good_Qty': 12,
+                       'Separate': 13, 'Scrap': 14, 'SecondGrade': 15, 'Target': 16, 'OverControl': 17,
+                       'ActiveRate': 18, 'OpticalNGRate': 19, }
         colmn_letter = {'Name': 'A', 'ProductItem': 'B', 'AQL': 'C', 'Shift': 'D', 'Line': 'E',
                         'max_speed': 'F', 'min_speed': 'G', 'avg_speed': 'H', 'LineSpeedStd': 'I',
-                        'ProductionTime': 'J', 'sum_qty': 'K', 'TicketQty': 'L', 'Separate': 'M', 'Scrap': 'N',
-                        'SecondGrade': 'O', 'Target': 'P', 'OverControl': 'Q', 'ActiveRate': 'R',
-                        'OpticalNGRate': 'S', }
+                        'ProductionTime': 'J', 'sum_qty': 'K', 'TicketQty': 'L', 'Good_Qty': 'M', 'Separate': 'N', 'Scrap': 'O',
+                        'SecondGrade': 'P', 'Target': 'Q', 'OverControl': 'R', 'ActiveRate': 'S',
+                        'OpticalNGRate': 'T', }
 
         # Create a bold font style
         bold_font = Font(bold=True)
@@ -785,7 +795,7 @@ class mes_daily_report(object):
                     cell.alignment = self.center_align_style.alignment
                     cell.number_format = '0.0%'  # 百分比格式，小數點 1 位
                     worksheet.column_dimensions[col_letter].hidden = True
-                elif col_letter in [colmn_letter['TicketQty']]:
+                elif col_letter in [colmn_letter['TicketQty'], colmn_letter['Good_Qty']]:
                     worksheet.column_dimensions[col_letter].width = 15
                     cell.alignment = self.right_align_style.alignment
                     cell.number_format = '#,##0'
@@ -990,6 +1000,8 @@ class mes_daily_report(object):
                         'LineSpeedStd': '',
                         'ProductionTime': '',
                         'sum_qty': 0,
+                        'Ticket_Qty': 0,
+                        'Good_Qty': 0,
                         'Separate': '',
                         'Scrap': '',
                         'SecondGrade': '',
@@ -1040,6 +1052,7 @@ class mes_daily_report(object):
                         'ProductionTime': min2hour(line_group['ProductionTime']),
                         'sum_qty': line_group['sum_qty'].sum(),
                         'Ticket_Qty': line_group['Ticket_Qty'].sum(),
+                        'Good_Qty': line_group['Good_Qty'].sum(),
                         'Separate': counting_ng_ratio(line_group['Separate']),
                         'Scrap': line_scrap_rate,
                         'SecondGrade': line_second_rate,
@@ -1073,6 +1086,7 @@ class mes_daily_report(object):
                         'ProductionTime': day_df['ProductionTime'].mean(),
                         'sum_qty': day_df['sum_qty'].sum(),
                         'Ticket_Qty': day_df['Ticket_Qty'].sum(),
+                        'Good_Qty': day_df['Good_Qty'].sum(),
                         'Separate': day_df['Separate'].mean(),
                         'Scrap': day_df['Scrap'].mean(),
                         'SecondGrade': day_df['SecondGrade'].mean(),
@@ -1109,6 +1123,7 @@ class mes_daily_report(object):
                         'ProductionTime': night_df['ProductionTime'].mean(),
                         'sum_qty': night_df['sum_qty'].sum(),
                         'Ticket_Qty': night_df['Ticket_Qty'].sum(),
+                        'Good_Qty': night_df['Good_Qty'].sum(),
                         'Separate': night_df['Separate'].mean(),
                         'Scrap': night_df['Scrap'].mean(),
                         'SecondGrade': night_df['SecondGrade'].mean(),
@@ -1151,6 +1166,7 @@ class mes_daily_report(object):
                     'ProductionTime': day_production_time + night_production_time,
                     'sum_qty': sum_qty,
                     'Ticket_Qty': mach_group['Ticket_Qty'].sum(),
+                    'Good_Qty': mach_group['Good_Qty'].sum(),
                     'Separate': counting_ng_ratio(mach_group['Separate']),
                     'Scrap': tmp_scrap,
                     'SecondGrade': tmp_second,
@@ -1212,7 +1228,10 @@ class mes_daily_report(object):
         ax1.set_xlabel('機台')
         ax1.set_ylabel('日產量')
         # 設置 Y 軸的上限為 120 萬
-        ax1.set_ylim(0, 1200000)
+        if plant == "PVC":
+            ax1.set_ylim(0, 600000)
+        else:
+            ax1.set_ylim(0, 1200000)
 
         # 自定義 Y 軸以 10 萬為單位
         def y_formatter(x, pos):
