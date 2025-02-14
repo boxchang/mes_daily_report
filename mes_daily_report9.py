@@ -48,7 +48,7 @@ class mes_daily_report(object):
         'avg_speed': '車速(平均)',
         'sum_qty': '產量(加總)',
         'Ticket_Qty': '入庫量(加總)',
-        'Good_Qty': '入庫良品量(加總)',
+        'Good_Qty': '包裝確認量',
         'ProductionTime': '生產時間',
         'LineSpeedStd': '標準車速',
         'Target': '目標產能',
@@ -250,9 +250,27 @@ class mes_daily_report(object):
         finally:
             attachment.close()
 
+    def is_special_date(self, date):
+        result = False
+        mes_olap_db = mes_olap_database()
+        sql = f"""
+        SELECT CONTROL_DATE FROM [MES_OLAP].[dbo].[special_date] WHERE job_name = 'mes_daily_report'
+        AND CONTROL_DATE = CONVERT(DATE, '{date}', 112)
+        """
+        raws = mes_olap_db.select_sql_dict(sql)
+
+        if len(raws) > 0:
+            result = True
+
+        return result
+
     def main(self, fix_mode):
         report_date1 = self.report_date1
         report_date2 = self.report_date2
+
+        if self.is_special_date(report_date1):
+            sys.exit()
+
         db = mes_database()
 
         file_list = []
@@ -270,58 +288,76 @@ class mes_daily_report(object):
             os.makedirs(save_path)
 
         for plant in ['NBR', 'PVC']:
-            logging.info(f"{plant} start running......")
-            # Create Excel file
-            file_name = f'MES_{plant}_DAILY_Report_{report_date1}.xlsx'
-            excel_file = os.path.join(save_path, file_name)
-
-            df_main = self.get_df_main(db, report_date1, report_date2, plant)
-
-            df_detail = self.get_df_detail(db, report_date1, report_date2, plant)
-
-            df_final = pd.merge(df_main, df_detail, on=['Name', 'Period', 'Line'], how='left')
-
-            # 檢查欄位 LineSpeedStd 是否有空值
-            df_filtered = df_main[df_main['Line'].notnull()]
-            isNoStandard = df_filtered['LineSpeedStd'].isnull().any()
-
-            df_selected = df_final[
-                ['Date', 'Name', 'Line', 'Shift', 'WorkOrderId', 'PartNo', 'ProductItem', 'AQL', 'ProductionTime',
-                 'Period', 'max_speed', 'min_speed', 'avg_speed', 'LineSpeedStd', 'sum_qty', 'Ticket_Qty', 'Good_Qty', 'Separate',
-                 'Target', 'Scrap', 'SecondGrade', 'OverControl', 'WeightValue', 'OpticalNGRate', 'WeightLower',
-                 'WeightUpper', 'WoStartDate', 'WoEndDate', ]]
-
-            df_with_subtotals, df_chart, df_activation = self.sorting_data(db, df_selected)
-
-            # 生產時間不可能超過24小時，防呆檢查
-            numeric_production_time = df_with_subtotals['生產時間'].str.rstrip('H').astype(float)
-            has_greater_than_24 = (numeric_production_time > 24).any()
-
-            with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
-                self.generate_summary_excel(writer, df_with_subtotals)
-
-                machine_groups = df_selected.groupby('Name')
-                for machine_name, machine_df in machine_groups:
-                    # 處理停機情況
-                    if not machine_df['ProductItem'].iloc[0]:
-                        continue
-
-                    machine_df = machine_df.sort_values(by=['Date', 'Shift', 'Period'])
-                    self.generate_excel(writer, machine_df, plant, machine_name)
-                # 稼動率Raw Data
-                self.generate_activation_excel(writer, df_activation)
-
-            file_list.append({'file_name': file_name, 'excel_file': excel_file})
-
-            # Generate Chart
-            image_buffer = self.generate_chart(save_path, plant, report_date1, df_chart)
-            image_buffers.append(image_buffer)
-
-            if isNoStandard:
-                error_list.append(f"{machine_name}有品項尚未維護標準值，無法計算目標產量")
-
-            logging.info(f"{plant} save raw data")
             try:
+                special_output = False
+                is_greater_than_24 = False
+
+                logging.info(f"{plant} start running......")
+                # Create Excel file
+                file_name = f'MES_{plant}_DAILY_Report_{report_date1}.xlsx'
+                excel_file = os.path.join(save_path, file_name)
+
+                df_main = self.get_df_main(db, report_date1, report_date2, plant)
+
+                df_detail = self.get_df_detail(db, report_date1, report_date2, plant)
+
+                df_final = pd.merge(df_main, df_detail, on=['Name', 'Period', 'Line'], how='left')
+
+                # 檢查欄位 LineSpeedStd 是否有空值
+                df_filtered = df_main[df_main['Line'].notnull()]
+                isNoStandard = df_filtered['LineSpeedStd'].isnull().any()
+
+                df_selected = df_final[
+                    ['Date', 'Name', 'Line', 'Shift', 'WorkOrderId', 'PartNo', 'ProductItem', 'AQL', 'ProductionTime',
+                     'Period', 'max_speed', 'min_speed', 'avg_speed', 'LineSpeedStd', 'sum_qty', 'Ticket_Qty', 'Good_Qty', 'Separate',
+                     'Target', 'Scrap', 'SecondGrade', 'OverControl', 'WeightValue', 'OpticalNGRate', 'WeightLower',
+                     'WeightUpper', 'WoStartDate', 'WoEndDate', ]]
+
+                df_with_subtotals, df_chart, df_activation = self.sorting_data(db, df_selected)
+
+                # 生產時間不可能超過24小時，防呆檢查
+                numeric_production_time = df_with_subtotals['生產時間'].str.rstrip('H').astype(float)
+                has_greater_than_24 = (numeric_production_time > 24).any()
+                if has_greater_than_24:
+                    is_greater_than_24 = True
+                    error_list.append(f"{plant}發生總時數超過24，可能IPQC有用錯RunCard的情況")
+
+                # 判斷是否有用其他方式收貨，要去詢問產線異常原因
+                abnormal_machine = ""
+                for _, row in df_final.iterrows():
+                    if not pd.isna(row['sum_qty']) and not pd.isna(row['Ticket_Qty']):
+                        if int(row['sum_qty']) < 100 and int(row['Ticket_Qty']) > 1000:
+                            special_output = True
+                            abnormal_machine = row['Name']
+                            break
+                if special_output:
+                    error_list.append(f"{abnormal_machine} 點數機資料與SAP入庫資料差異過大，可能發生用舊點數機的情況")
+
+                with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
+                    self.generate_summary_excel(writer, df_with_subtotals)
+
+                    machine_groups = df_selected.groupby('Name')
+                    for machine_name, machine_df in machine_groups:
+                        # 處理停機情況
+                        if not machine_df['ProductItem'].iloc[0]:
+                            continue
+
+                        machine_df = machine_df.sort_values(by=['Date', 'Shift', 'Period'])
+                        self.generate_excel(writer, machine_df, plant, machine_name)
+                    # 稼動率Raw Data
+                    self.generate_activation_excel(writer, df_activation)
+
+                file_list.append({'file_name': file_name, 'excel_file': excel_file})
+
+                # Generate Chart
+                image_buffer = self.generate_chart(save_path, plant, report_date1, df_chart)
+                image_buffers.append(image_buffer)
+
+                if isNoStandard:
+                    error_list.append(f"有品項尚未維護標準值，無法計算目標產量")
+
+                logging.info(f"{plant} save raw data")
+
                 self.delete_mes_olap(report_date1, report_date2, plant)
                 self.insert_mes_olap(df_selected)
             except Exception as e:
@@ -336,7 +372,7 @@ class mes_daily_report(object):
                 error_list.append(f"{device}點數機資料異常")
         error_msg = '<br>'.join(error_list)
 
-        if isCountingErrorResult or isNoStandard or has_greater_than_24:
+        if len(error_list) > 0:
             if not fix_mode:
                 self.send_admin_email(file_list, image_buffers, report_date1, error_msg)
                 print('Admin Email sent successfully')
@@ -696,7 +732,7 @@ class mes_daily_report(object):
                 if col_letter in [colmn_letter['max_speed'], colmn_letter['min_speed'], colmn_letter['avg_speed'],
                                   colmn_letter['LineSpeedStd']]:  # Apply right alignment for specific columns
                     cell.alignment = self.right_align_style.alignment
-                elif col_letter in [colmn_letter['sum_qty'], colmn_letter['Target']]:
+                elif col_letter in [colmn_letter['sum_qty'], colmn_letter['Target'], colmn_letter['Good_Qty']]:
                     cell.number_format = '#,##0'
                     cell.alignment = self.right_align_style.alignment
                 elif col_letter in [colmn_letter['WeightValue']]:
@@ -710,7 +746,7 @@ class mes_daily_report(object):
                     cell.number_format = '0.0%'
                 elif col_letter in [colmn_letter['WeightLower'], colmn_letter['WeightUpper']]:
                     worksheet.column_dimensions[col_letter].hidden = True
-                elif col_letter in [colmn_letter['Ticket_Qty'], colmn_letter['Good_Qty']]:
+                elif col_letter in [colmn_letter['Ticket_Qty']]:
                     cell.number_format = '#,##0'
                     cell.alignment = self.right_align_style.alignment
                     worksheet.column_dimensions[col_letter].hidden = True
@@ -781,7 +817,7 @@ class mes_daily_report(object):
                 elif col_letter in [colmn_letter['ProductionTime']]:
                     worksheet.column_dimensions[col_letter].width = 15
                     cell.alignment = self.center_align_style.alignment
-                elif col_letter in [colmn_letter['sum_qty'], colmn_letter['Target']]:
+                elif col_letter in [colmn_letter['sum_qty'], colmn_letter['Target'], colmn_letter['Good_Qty']]:
                     worksheet.column_dimensions[col_letter].width = 15
                     cell.alignment = self.right_align_style.alignment
                     cell.number_format = '#,##0'
@@ -795,7 +831,7 @@ class mes_daily_report(object):
                     cell.alignment = self.center_align_style.alignment
                     cell.number_format = '0.0%'  # 百分比格式，小數點 1 位
                     worksheet.column_dimensions[col_letter].hidden = True
-                elif col_letter in [colmn_letter['TicketQty'], colmn_letter['Good_Qty']]:
+                elif col_letter in [colmn_letter['TicketQty']]:
                     worksheet.column_dimensions[col_letter].width = 15
                     cell.alignment = self.right_align_style.alignment
                     cell.number_format = '#,##0'

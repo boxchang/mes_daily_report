@@ -1,9 +1,10 @@
 import sys
 import os
 from PIL import Image as PILImage
-from matplotlib.ticker import MultipleLocator
+from matplotlib.ticker import MultipleLocator, FuncFormatter
 
-from database import vnedc_database, mes_database
+from database import vnedc_database, mes_database, mes_olap_database
+
 curPath = os.path.abspath(os.path.dirname(__file__))
 rootPath = os.path.split(curPath)[0]
 sys.path.append(rootPath)
@@ -23,6 +24,8 @@ from email import encoders
 from email.mime.image import MIMEImage
 from openpyxl.drawing.image import Image
 from dateutil.relativedelta import relativedelta
+import matplotlib.gridspec as gridspec
+import numpy as np
 
 class mes_weekly_report(object):
     this_start_date = ""
@@ -36,6 +39,7 @@ class mes_weekly_report(object):
     date_mark = ""
     file_list = []
     image_buffers = []
+    mach_list = ""
 
     # Define Style
     percent_style = NamedStyle(name='percent_style', number_format='0.00%')
@@ -71,7 +75,58 @@ class mes_weekly_report(object):
         'Activation': '稼動率',
         'OpticalNGRate': '光檢不良率',
         'Achievement Rate': '目標達成率',
-        'Date': '日期範圍'
+        'Date': '日期範圍',
+        'CountingQty': '點數機數量',
+        'FaultyQuantity': '二級品數量',
+        'ScrapQuantity': '廢品數量',
+        'SeparateQuantity': '隔離品數量',
+        'SeparateQty': '隔離品數量',
+        'OnlinePacking': '包裝確認量',
+        'RunTime': '機台運轉時間',
+        'StopTime': '停機時間',
+        'AllTime': '可運轉時間',
+        'StandSpeed': '標準車速',
+        'Capacity': '產能效率',
+        'Yield': '良率',
+        'SeparateRate': '隔離率',
+        'ScrapRate': '報廢率',
+        'Plant': '廠別',
+        'Year': '年',
+        'MonthWeek': '週別',
+        'AvgSpeed': '車速',
+        'Tensile_Value': '抗拉強度值',
+        'Tensile_Limit': '抗拉強度上下限',
+        'Tensile_Status': '抗拉強度結果',
+        'Elongation_Value': '伸長率值',
+        'Elongation_Limit': '伸長率上下限',
+        'Elongation_Status': '伸長率結果',
+        'Roll_Value': '卷唇厚度值',
+        'Roll_Limit': '卷唇厚度上下限',
+        'Roll_Status': '卷唇厚度結果',
+        'Cuff_Value': '袖厚度值',
+        'Cuff_Limit': '袖厚度上下限',
+        'Cuff_Status': '袖厚度結果',
+        'Palm_Value': '掌厚度值',
+        'Palm_Limit': '掌厚度上下限',
+        'Palm_Status': '掌厚度結果',
+        'Finger_Value': '指厚度值',
+        'Finger_Limit': '指厚度上下限',
+        'Finger_Status': '指厚度結果',
+        'FingerTip_Value': '指尖厚度值',
+        'FingerTip_Limit': '指尖厚度上下限',
+        'FingerTip_Status': '指尖厚度結果',
+        'Length_Value': '長度值',
+        'Length_Limit': '長度上下限',
+        'Length_Status': '長度結果',
+        'Width_Value': '寬度值',
+        'Width_Limit': '寬度上下限',
+        'Width_Status': '寬度結果',
+        'Weight_Value': '重量值',
+        'Weight_Limit': '重量上下限',
+        'Weight_Status': '重量結果',
+        'Pinhole_Value': '針孔值',
+        'Pinhole_Limit': '針孔上下限',
+        'Pinhole_Status': '針孔結果'
     }
 
     # 配置日志记录器
@@ -92,16 +147,12 @@ class mes_weekly_report(object):
 
         if mode == "MONTHLY":
             this_start_date = today.replace(day=1)
-            self.this_start_date = this_start_date
-            this_end_date = (this_start_date.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
-            self.this_end_date = this_end_date
 
             last_end_date = this_start_date - timedelta(days=1)
             self.last_end_date = last_end_date
             last_start_date = last_end_date.replace(day=1)
             self.last_start_date = last_start_date
 
-            # Manual Run
             this_end_date = this_start_date - timedelta(days=1)
             self.this_end_date = this_end_date
             this_start_date = last_end_date.replace(day=1)
@@ -134,52 +185,42 @@ class mes_weekly_report(object):
 
 
     def generate_excel(self, writer, df, machine_name):
-        colmn_letter = {'Date': 'A', 'Name': 'B', 'Line': 'C', 'Shift': 'D', 'WorkOrderId': 'E', 'PartNo': 'F',
-                        'ProductItem': 'G',
-                        'AQL': 'H', 'ProductionTime': 'I', 'Period': 'J', 'max_speed': 'K', 'min_speed': 'L',
-                        'avg_speed': 'M', 'LineSpeedStd': 'N', 'sum_qty': 'O', 'Ticket_Qty': 'P', 'Separate': 'Q',
-                        'Target': 'R',
-                        'Scrap': 'S', 'SecondGrade': 'T', 'OverControl': 'U', 'WeightValue': 'V', 'WeightLower': 'W',
-                        'WeightUpper': 'X', 'Activation': 'Y', 'OpticalNGRate': 'Z'}
+        column_letter = {'belong_to': 'A', 'Machine': 'B', 'Line': 'C', 'Shift': 'D', 'WorkOrder': 'E',
+                 'PartNo': 'F', 'ProductItem': 'G', 'StandardAQL': 'H', 'InspectedAQL': 'I', 'Period': 'J',
+                 'MaxSpeed': 'K', 'MinSpeed': 'L', 'AvgSpeed': 'M', 'StdSpeed': 'N',
+                 'CountingQty': 'O', 'OnlinePacking': 'P', 'WIPPacking': 'Q', 'Target': 'R', 'ScrapQuantity': 'S', 'FaultyQuantity': 'T',
+                 'RunTime': 'U', 'StopTime': 'V', 'AllTime': 'W', 'MonthWeek': 'X',
+                 'Tensile_Value': 'Y', 'Tensile_Limit': 'Z', 'Tensile_Status': 'AA',
+                 'Elongation_Value': 'AB', 'Elongation_Limit': 'AC', 'Elongation_Status': 'AD',
+                 'Roll_Value': 'AE', 'Roll_Limit': 'AF', 'Roll_Status': 'AG',
+                 'Cuff_Value': 'AH', 'Cuff_Limit': 'AI', 'Cuff_Status': 'AJ',
+                 'Palm_Value': 'AK', 'Palm_Limit': 'AL', 'Palm_Status': 'AM',
+                 'Finger_Value': 'AN', 'Finger_Limit': 'AO', 'Finger_Status': 'AP',
+                 'FingerTip_Value': 'AQ', 'FingerTip_Limit': 'AR', 'FingerTip_Status': 'AS',
+                 'Length_Value': 'AT', 'Length_Limit': 'AU', 'Length_Status': 'AV',
+                 'Weight_Value': 'AW', 'Weight_Limit': 'AX', 'Weight_Status': 'AY',
+                 'Width_Value': 'AZ', 'Width_Limit': 'BA', 'Width_Status': 'BB',
+                 'Pinhole_Value': 'BC', 'Pinhole_Limit': 'BD', 'Pinhole_Status': 'BE', 'IPQC': 'BF',
+                 'SeparateQty': 'BG'
+                }
 
-        # Preprocess data for Excel
-        df['ProductionTime'] = (df['ProductionTime'] // 60).astype(str) + 'H'
         df['Period'] = df['Period'].apply(lambda x: f"{int(x):02}:00")
 
         # Rename columns
         df.rename(columns=self.header_columns, inplace=True)
-
         namesheet = str(machine_name).split('_')[-1]
         save_path = self.save_path
-        file_name = f"MES_{machine_name}_Chart.png"
-        chart_img = os.path.join(save_path, file_name)
-        if os.path.exists(chart_img):
-            header_row = 31
-            data_start_row = 32
-        else:
-            header_row = 0
-            data_start_row = 1
+
+        header_row = 0
+        data_start_row = 1
 
         # Write data to the Excel sheet
         df.to_excel(writer, sheet_name=namesheet, index=False, startrow=header_row)
 
         workbook = writer.book
         worksheet = writer.sheets.get(namesheet)
-
         if not worksheet:
             worksheet = workbook.add_worksheet(namesheet)
-
-        try:
-            img = Image(chart_img)
-            img.height = 6 * 96
-            img.width = 11.69 * 96
-            img.anchor = 'A1'
-            worksheet.add_image(img)
-        except:
-            print('No counting machine data yet!')
-            pass
-        # Freeze the first row of data
-        # worksheet.freeze_panes = worksheet[f'A{data_start_row+1}']
 
         # Apply Header Style
         for cell in worksheet[data_start_row]:
@@ -193,98 +234,131 @@ class mes_weekly_report(object):
             col_letter = col[0].column_letter
 
             worksheet.column_dimensions[col_letter].width = max_length + 5
-
             for cell in col:
-                if col_letter in [colmn_letter['max_speed'], colmn_letter['min_speed'], colmn_letter['avg_speed'],
-                                  colmn_letter['LineSpeedStd']]:
+                if col_letter in [column_letter['MaxSpeed'], column_letter['MinSpeed'], column_letter['AvgSpeed'],
+                                  column_letter['StdSpeed']]:
                     cell.alignment = self.right_align_style.alignment
-                elif col_letter in [colmn_letter['sum_qty'], colmn_letter['Target']]:
+                elif col_letter in [column_letter['CountingQty'], column_letter['OnlinePacking'], column_letter['Target'], column_letter['SeparateQty']]:
                     cell.number_format = '#,##0'
                     cell.alignment = self.right_align_style.alignment
-                elif col_letter in [colmn_letter['WeightValue']]:
-                    try:
-                        cell.value = float(cell.value)
-                    except:
-                        pass
-                elif col_letter in [colmn_letter['OpticalNGRate']]:
-                    worksheet.column_dimensions[col_letter].width = 10
-                    cell.alignment = self.center_align_style.alignment
-                    cell.number_format = '0.0%'
-                elif col_letter in [colmn_letter['WeightLower'], colmn_letter['WeightUpper']]:
-                    worksheet.column_dimensions[col_letter].hidden = True
-                elif col_letter in [colmn_letter['Ticket_Qty']]:
-                    cell.number_format = '#,##0'
-                    cell.alignment = self.right_align_style.alignment
-                    worksheet.column_dimensions[col_letter].hidden = True
-                else:
-                    cell.alignment = self.center_align_style.alignment
 
-        # Add comments to WeightValue cells based on WeightLower and WeightUpper
-        for row in range(data_start_row, worksheet.max_row + 1):
-            weight_value_cell = worksheet[colmn_letter['WeightValue'] + str(row)]
-            weight_lower_cell = worksheet[colmn_letter['WeightLower'] + str(row)].value
-            weight_upper_cell = worksheet[colmn_letter['WeightUpper'] + str(row)].value
+        # # 設置欄的 outlineLevel 讓其可以折疊/展開
+        hide_columns = ['Tensile_Value','Tensile_Limit','Tensile_Status','Elongation_Value','Elongation_Limit','Elongation_Status',
+                        'Roll_Value','Roll_Limit','Roll_Status','Cuff_Value','Cuff_Limit','Cuff_Status','Palm_Value','Palm_Limit','Palm_Status',
+                        'Finger_Value','Finger_Limit','Finger_Status','FingerTip_Value','FingerTip_Limit','FingerTip_Status',
+                        'Length_Value','Length_Limit','Length_Status', 'Weight_Value', 'Weight_Limit', 'Weight_Status', 'Width_Value','Width_Limit','Width_Status',
+                        'Pinhole_Value','Pinhole_Limit','Pinhole_Status']
+        for column in hide_columns:
+            worksheet.column_dimensions[column_letter[column]].outlineLevel = 1
 
-            if weight_lower_cell or weight_upper_cell:
-                comment = Comment(text=f"IPQC範圍({weight_lower_cell}-{weight_upper_cell})", author="System")
-                weight_value_cell.comment = comment
+        worksheet.column_dimensions.group(column_letter['Tensile_Value'], column_letter['Pinhole_Status'], hidden=True)
 
         return workbook
 
     def generate_raw_excel(self, plant):
-        this_start_date = self.this_start_date
-        this_end_date = self.this_end_date
         save_path = self.save_path
         date_mark = self.date_mark
         mode = self.mode
+        month_week = '2W2'#self.month_week
+        year = 2025
 
         file_name = f'MES_{plant}_{mode}_Report_{date_mark}.xlsx'
         excel_file = os.path.join(save_path, file_name)
         with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
-            sql = f"""SELECT belong_to
-                      ,[Name]
-                      ,[Line]
-                      ,[Shift]
-                      ,[WorkOrderId]
-                      ,[PartNo]
-                      ,[ProductItem]
-                      ,[AQL]
-                      ,[ProductionTime]
-                      ,[Period]
-                      ,[max_speed]
-                      ,[min_speed]
-                      ,[avg_speed]
-                      ,[LineSpeedStd]
-                      ,[sum_qty]
-                      ,[ticket_qty]
-                      ,CASE 
-                           WHEN [Separate] = 'null' THEN '' 
-                           ELSE [Separate] 
-                       END AS [Separate]
-                      ,[Target]
-                      ,[Scrap]
-                      ,[SecondGrade]
-                      ,[OverControl]
-                      ,[WeightValue]
-                      ,[WeightLower]
-                      ,[WeightUpper]
-                      ,[Activation]
-                      ,[OpticalNGRate]
-                        FROM [MES_OLAP].[dbo].[mes_daily_report_raw]
-                        where name like '%{plant}%' and belong_to between '{this_start_date}' and '{this_end_date}'
-                        order by name, belong_to, line, shift, period
+            sql = f"""SELECT WorkDate, Machine, Line, Shift, WorkOrder, PartNo, ProductItem, StandardAQL, InspectedAQL,
+                        Period, MaxSpeed, MinSpeed, AvgSpeed, StdSpeed, CountingQty, OnlinePacking, WIPPacking, Target, ScrapQuantity, FaultyQuantity, RunTime, StopTime, 60 as AllTime, c.MonthWeek,
+                        Tensile_Value,Tensile_Limit,Tensile_Status,Elongation_Value,Elongation_Limit,Elongation_Status,
+                        Roll_Value,Roll_Limit,Roll_Status,Cuff_Value,Cuff_Limit,Cuff_Status,Palm_Value,Palm_Limit,Palm_Status,
+                        Finger_Value,Finger_Limit,Finger_Status,FingerTip_Value,FingerTip_Limit,FingerTip_Status,
+                        Length_Value,Length_Limit,Length_Status, Weight_Value, Weight_Limit, Weight_Status, Width_Value,Width_Limit,Width_Status,
+                        Pinhole_Value,Pinhole_Limit,Pinhole_Status
+                        FROM [MES_OLAP].[dbo].[counting_daily_info_raw] c
+                        LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on c.Runcard = ipqc.Runcard
+                        where c.Year = {year} and c.MonthWeek = '{month_week}'  
+                        and c.branch like'%{plant}%' and Machine not in ('VN_GD_PVC1_L03','VN_GD_PVC1_L04')
+                        --and StandardAQL is not Null and InspectedAQL is not null 
+                        order by Machine, WorkDate, Cast(Period as Int), Line
                         """
             data = self.db.select_sql_dict(sql)
             df = pd.DataFrame(data)
 
-            machine_groups = df.groupby('Name')
-            self.generate_summary(writer, machine_groups)
+            # 設定IPQC欄位判斷條件
+            df['IPQC'] = df[
+                ['Tensile_Status', 'Elongation_Status', 'Roll_Status', 'Cuff_Status', 'Palm_Status',
+                 'Finger_Status', 'FingerTip_Status', 'Length_Status', 'Weight_Status', 'Width_Status',
+                 'Pinhole_Status']].apply(lambda row: 'NG' if 'NG' in row.values else 'PASS', axis=1)
+            df['SeparateQty'] = df.apply(
+                lambda row: row['OnlinePacking'] + row['WIPPacking'] if row['IPQC'] == 'NG' else None, axis=1)
+
+            machine_groups = df.groupby('Machine')
+            summary_df = self.generate_summary(writer, machine_groups)
+
             for machine_name, machine_df in machine_groups:
                 self.generate_excel(writer, machine_df, machine_name)
-        self.file_list.append(excel_file)
+
+            self.delete_counting_weekly_info_raw(plant, year, month_week)
+            self.insert_counting_weekly_info_raw(plant, year, month_week, summary_df)
+
+            self.generate_12aspect_excel(writer, plant)
+        # self.file_list.append(excel_file)
+
+    def generate_12aspect_excel(self, writer, plant):
+        colmn_letter = {'Plant': 'A', 'Year': 'B', 'MonthWeek': 'C', 'CountingQty': 'D', 'SeparateQty': 'E', 'AvgSpeed': 'F',
+                        'Activation': 'G', 'Capacity': 'H', 'Yield': 'I', 'OEE': 'J', 'SeparateRate': 'K', 'ScrapRate': 'L',
+                        'Target': 'M', 'OnlinePacking': 'N',}
+
+        sql = f"""
+            SELECT [Plant], [Year], [MonthWeek]
+              ,[CountingQty],[SeparateQty] SeparateQuantity,[AvgSpeed]
+              ,[Activation],[Capacity],[Yield]
+              ,[OEE],[SeparateRate],[ScrapRate],[Target],[OnlinePacking]
+          FROM [MES_OLAP].[dbo].[counting_weekly_info_raw] where Plant = '{plant}'
+        """
+        data = self.db.select_sql_dict(sql)
+        df = pd.DataFrame(data)
+
+        df.rename(columns=self.header_columns, inplace=True)
+
+        sheet_name = "週累計"
+        df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+
+
+        # Read the written Excel file
+        workbook = writer.book
+        worksheet = writer.sheets[sheet_name]
+
+        # Apply Header Style
+        for cell in worksheet[1]:  # First line is Header
+            cell.font = self.header_font
+            cell.alignment = self.header_alignment
+            cell.border = self.header_border
+            # Formatting
+
+        for col in worksheet.columns:
+            max_length = max(len(str(cell.value)) for cell in col)
+            col_letter = col[0].column_letter
+
+            worksheet.column_dimensions[col_letter].width = max_length + 5
+
+            # Set alignment
+            for cell in col:
+                if col_letter in [colmn_letter['CountingQty'], colmn_letter['SeparateQty'],
+                                  colmn_letter['OnlinePacking'], colmn_letter['Target']]:  # Apply right alignment for specific columns
+                    cell.number_format = '#,##0'
+                    cell.alignment = self.right_align_style.alignment
+                elif col_letter in [colmn_letter['Activation'], colmn_letter['Capacity'], colmn_letter['Yield'],
+                                    colmn_letter['OEE'], colmn_letter['SeparateRate'], colmn_letter['ScrapRate']]:
+                    worksheet.column_dimensions[col_letter].width = 15
+                    cell.alignment = self.center_align_style.alignment
+                    cell.number_format = '0.0%'
+                else:
+                    cell.alignment = self.center_align_style.alignment
 
     def generate_summary(self, writer, machine_groups):
-        colmn_letter = {'Name': 'A', 'Week': 'B', 'shift': 'C', 'Line': 'D', 'Output': 'E', 'Target': 'F', 'Achievement Rate': 'G'}
+        colmn_letter = {'Name': 'A', 'Week': 'B', 'shift': 'C', 'Line': 'D', 'CountingQty': 'E', 'FaultyQty': 'F', 'ScrapQty': 'G',
+                        'SeparateQty': 'H', 'OnlinePacking': 'I', 'RunTime': 'J', 'AllTime': 'K', 'Activation': 'L',
+                        'StdSpeed': 'M', 'Target': 'N', 'Capacity': 'O', 'Yield': 'P', 'OEE': 'Q', 'Achievement': 'R'}
         summary_data = []
         tmp_date = self.date_mark.replace('_', '~')
         mode = self.mode
@@ -301,25 +375,65 @@ class mes_weekly_report(object):
             for shift in machine_df['Shift'].unique():  # Loop through each unique Line
                 for line in machine_df['Line'].unique():
                     filtered_df = machine_df[(machine_df['Line'] == line) & (machine_df['Shift'] == shift)]
-                    total_output = filtered_df['sum_qty'].sum()
-                    total_target = filtered_df['Target'].sum()
-                    rate = round((int(total_output) / int(total_target)), 3) if int(total_target) > 0 else 0
+                    countingQty = filtered_df['CountingQty'].sum()
+                    faultyQty = filtered_df['FaultyQuantity'].sum()
+                    scrapQty = filtered_df['ScrapQuantity'].sum()
+                    separateQty = filtered_df['SeparateQty'].sum()
+                    onlinePacking = filtered_df['OnlinePacking'].sum()
+                    runTime = filtered_df['RunTime'].sum()
+                    stopTime = filtered_df['StopTime'].sum()
+                    allTime = filtered_df['AllTime'].sum()
+                    stdSpeed = round(filtered_df['StdSpeed'].mean(), 0)
+                    target = filtered_df['Target'].sum()
+                    rate = round((int(onlinePacking) / int(target)), 3) if int(target) > 0 else 0
 
                     summary_row = {
                         'Name': machine_name,
                         'Date': tmp_week,
                         'Shift': shift,
                         'Line': line,
-                        'sum_qty': total_output,
-                        'Target': total_target,
+                        'CountingQty': countingQty,
+                        'FaultyQuantity': faultyQty,
+                        'ScrapQuantity': scrapQty,
+                        'SeparateQuantity': separateQty,
+                        'OnlinePacking': onlinePacking,
+                        'RunTime': runTime,
+                        'AllTime': allTime,
+                        'Activation': '',
+                        'StandSpeed': stdSpeed,
+                        'Target': target,
+                        'Capacity': '',
+                        'Yield': '',
+                        'OEE': '',
                         'Achievement Rate': rate
                     }
                     summary_data.append(summary_row)
-            avg_rate = [item['Achievement Rate'] for item in summary_data if item['Name'] == machine_name]
-            sum_qty = sum(item['sum_qty'] for item in summary_data if item['Name'] == machine_name)
-            sum_target = sum(item['Target'] for item in summary_data if item['Name'] == machine_name)
 
-            summary_data.append({'Name': machine_name, 'Date': tmp_week, 'Shift': '', 'Line': '', 'sum_qty': sum_qty, 'Target': sum_target, 'Achievement Rate': round(sum_qty/sum_target, 3)})
+            # Summary Row
+            countingQty = sum(item['CountingQty'] for item in summary_data if item['Name'] == machine_name)
+            faultyQty = sum(item['FaultyQuantity'] for item in summary_data if item['Name'] == machine_name)
+            scrapQty = sum(item['ScrapQuantity'] for item in summary_data if item['Name'] == machine_name)
+            separateQty = sum(item['SeparateQuantity'] for item in summary_data if item['Name'] == machine_name)
+            onlinePacking = sum(item['OnlinePacking'] for item in summary_data if item['Name'] == machine_name)
+            runTime = sum(item['RunTime'] for item in summary_data if item['Name'] == machine_name)
+            allTime = sum(item['AllTime'] for item in summary_data if item['Name'] == machine_name)
+
+            stdSpeed_values = [item['StandSpeed'] for item in summary_data if item['Name'] == machine_name]
+            stdSpeed = round(sum(stdSpeed_values) / len(stdSpeed_values), 0) if stdSpeed_values else 0
+
+            target = sum(item['Target'] for item in summary_data if item['Name'] == machine_name)
+            activation = round(runTime/allTime, 3) if int(allTime) > 0 else 0
+            output = countingQty+faultyQty+scrapQty
+            capacity = round(output/target, 3) if int(target) > 0 else 0
+            _yield = round((onlinePacking-separateQty)/output, 3) if int(output) > 0 else 0
+            oee = round(activation * capacity * _yield, 3)
+            rate = round(onlinePacking/target, 3) if int(target) > 0 else 0
+
+            summary_data.append({'Name': machine_name, 'Date': tmp_week, 'Shift': '', 'Line': '',
+                                 'CountingQty': countingQty, 'FaultyQuantity': faultyQty, 'ScrapQuantity': scrapQty,
+                                 'SeparateQuantity': separateQty, 'OnlinePacking': onlinePacking,
+                                 'RunTime': runTime, 'AllTime': allTime, 'StandSpeed': stdSpeed, 'Target': target,
+                                 'Activation': activation, 'Capacity': capacity, 'Yield': _yield, 'OEE': oee, 'Achievement Rate': rate})
         summary_df = pd.DataFrame(summary_data)
         # Change column names
         summary_df.rename(columns=self.header_columns, inplace=True)
@@ -344,10 +458,11 @@ class mes_weekly_report(object):
 
             # Set alignment
             for cell in col:
-                if col_letter in [colmn_letter['Output'], colmn_letter['Target']]:  # Apply right alignment for specific columns
+                if col_letter in [colmn_letter['CountingQty'], colmn_letter['FaultyQty'], colmn_letter['ScrapQty'], colmn_letter['SeparateQty'],
+                                  colmn_letter['OnlinePacking'], colmn_letter['Target'], colmn_letter['RunTime'], colmn_letter['AllTime']]:  # Apply right alignment for specific columns
                     cell.number_format = '#,##0'
                     cell.alignment = self.right_align_style.alignment
-                elif col_letter in [colmn_letter['Achievement Rate']]:
+                elif col_letter in [colmn_letter['Activation'], colmn_letter['Capacity'], colmn_letter['Yield'], colmn_letter['OEE'], colmn_letter['Achievement']]:
                     worksheet.column_dimensions[col_letter].width = 15
                     cell.alignment = self.center_align_style.alignment
                     cell.number_format = '0.0%'
@@ -382,6 +497,32 @@ class mes_weekly_report(object):
             if len(summary_df) + 1 - group_start > 1:
                 worksheet.row_dimensions.group(group_start, len(summary_df) + 1 - 1, hidden=True)
 
+        comment = Comment(text="機台運作時間/可運轉時間", author="System")
+        comment.width = 600
+        worksheet[colmn_letter['Activation'] + "1"].comment = comment
+
+        comment = Comment(text="(點數機數量+二級品數量+廢品數量)/目標產能", author="System")
+        comment.width = 600
+        worksheet[colmn_letter['Capacity'] + "1"].comment = comment
+
+        comment = Comment(text="(包裝確認量-隔離品數量)/(點數機數量+二級品數量+廢品數量)", author="System")
+        comment.width = 600
+        worksheet[colmn_letter['Yield'] + "1"].comment = comment
+
+        comment = Comment(text="稼動率*效能效率*良率", author="System")
+        comment.width = 600
+        worksheet[colmn_letter['OEE'] + "1"].comment = comment
+
+        comment = Comment(text="包裝確認量/預估產能", author="System")
+        comment.width = 600
+        worksheet[colmn_letter['Achievement'] + "1"].comment = comment
+
+        comment = Comment(text="IPQC其中一項判定不合格", author="System")
+        comment.width = 600
+        worksheet[colmn_letter['SeparateQty'] + "1"].comment = comment
+
+
+        return summary_df
 
     def generate_chart(self, plant):
         this_start_date = self.this_start_date
@@ -400,9 +541,14 @@ class mes_weekly_report(object):
                     sum(case when cast(belong_to as date) between '{this_start_date}' and '{this_end_date}' then sum_qty else 0 end) as this_time,
                     sum(case when cast(belong_to as date) between '{this_start_date}' and '{this_end_date}' then target else 0 end) as target_this_time,
                     sum(case when cast(belong_to as date) between '{last_start_date}' and '{last_end_date}' then sum_qty else 0 end) as last_time,
-                    sum(case when cast(belong_to as date) between '{last_start_date}' and '{last_end_date}' then target else 0 end) as target_last_time
+                    sum(case when cast(belong_to as date) between '{last_start_date}' and '{last_end_date}' then target else 0 end) as target_last_time,
+                    (sum(case when cast(belong_to as date) between '{this_start_date}' and '{this_end_date}' then target else 0 end) -
+                    sum(case when cast(belong_to as date) between '{this_start_date}' and '{this_end_date}' then sum_qty else 0 end)) as this_unfinish,
+                    (sum(case when cast(belong_to as date) between '{last_start_date}' and '{last_end_date}' then target else 0 end) -
+                    sum(case when cast(belong_to as date) between '{last_start_date}' and '{last_end_date}' then sum_qty else 0 end)) as last_unfinish
                     FROM [MES_OLAP].[dbo].[mes_daily_report_raw]
                     where name like '%{plant}%'
+                    and name not in ('VN_GD_PVC1_L03','VN_GD_PVC1_L04')
                     group by name
                     order by name"""
         data = self.db.select_sql_dict(sql)
@@ -412,9 +558,11 @@ class mes_weekly_report(object):
         x_range = range(0, len(x_labels) * 2, 2)
 
         this_data = [int(item['this_time']) for item in data]
-        # last_data = [int(item['last_time']) for item in data]
+        this_unfinish = [int(item['this_unfinish']) if int(item['this_unfinish']) > 0 else 0 for item in data]
+
         max_data = max(this_data, default=0)
-        step_data = 5
+        step_data = 10
+
         rounded_max_data = int(
             (((max_data / (10 ** (len(str(max_data)) - 2))) // step_data) * step_data + step_data) * (
                     10 ** (len(str(max_data)) - 2)))
@@ -432,17 +580,20 @@ class mes_weekly_report(object):
         plt.figure(figsize=(16, 9))
         fig, ax1 = plt.subplots(figsize=(16, 9))
         if mode == "WEEKLY":
-            # last_month_bars = ax1.bar([i - bar_width / 2 for i in x_range], last_data, width=bar_width,
-            #                           label=f"{last_start_date.strftime('%d/%m')}-{last_end_date.strftime('%d/%m')}",
-            #                           align='center', color='#eeeeee')
+
             this_month_bars = ax1.bar([i for i in x_range], this_data, width=bar_width,
                                       label=f"週產量",
                                       align='center', color='#10ba81')
+            unfinish_bars = ax1.bar([i for i in x_range], this_unfinish, width=bar_width, bottom=this_data,
+                                      label=f"週目標差異",
+                                      align='center', color='lightgreen')
         if mode == "MONTHLY":
-            # last_month_bars = ax1.bar([i - bar_width / 2 for i in x_range], last_data, width=bar_width,
-            #                           label=f"{last_start_date.strftime('%B %Y')}", align='center', color='#eeeeee')
+
             this_month_bars = ax1.bar([i for i in x_range], this_data, width=bar_width,
                                       label=f"{this_start_date.strftime('%Y %m')}月產量", align='center', color='#10ba81')
+
+            unfinish_bars = ax1.bar([i for i in x_range], this_unfinish, width=bar_width, bottom=this_data,
+                                      label=f"{this_start_date.strftime('%Y %m')}月目標差異", align='center', color='lightgreen')
 
         ax1.set_xticks(x_range)
         ax1.set_xticklabels(x_labels, rotation=0, ha="center", fontsize=12)
@@ -450,44 +601,32 @@ class mes_weekly_report(object):
         if len(str(max_data)) > 7:
             yticks_positions = list(range(0, rounded_max_data + 1 * rounded_step_data, rounded_step_data))
             yticks_positions.append(int(rounded_max_data + 2 * rounded_step_data))
-            yticks_labels = [f"{int(i//(10**(len(str(max_data)) - 2)))}" + 'M PCS' if len(str(i)) > 6 else f"{i}" for i
+            yticks_labels = [f"{int(i//(10**(len(str(max_data)))))}" + '百萬' if len(str(i)) > 6 else f"{i}" for i
                              in yticks_positions]
-            # for bar in last_month_bars:
-            #     height = bar.get_height()
-            #     ax1.text(
-            #         bar.get_x() + bar.get_width() / 2,
-            #         height,
-            #         f'{round(height/(10**(len(str(max_data)) - 2)),2)}'.replace('.', ',')[:4] if height > 0 else '',
-            #         ha='center', va='bottom', fontsize=8  # Align the text
-            #     )
-            for bar in this_month_bars:
+
+            for index, bar in enumerate(this_month_bars):
                 height = bar.get_height()
+                unfinish_height = unfinish_bars[index].get_height()
                 ax1.text(
                     bar.get_x() + bar.get_width() / 2,
-                    height,
-                    f'{round(height/(10**(len(str(max_data)) - 2)),2)}'.replace('.', ',')[:4] if height > 0 else '',
-                    ha='center', va='bottom', fontsize=8  # Align the text
+                    height+unfinish_height,
+                    f'{round(height/(10**(len(str(max_data)) - 2)),2)}'[:4] if height > 0 else '',
+                    ha='center', va='bottom', fontsize=12  # Align the text
                 )
         elif 4 < len(str(max_data)) <= 7:
             yticks_positions = list(range(0, rounded_max_data + 1 * rounded_step_data, rounded_step_data))
             yticks_positions.append(int(rounded_max_data + 4 * rounded_step_data))
-            yticks_labels = [f"{int(i//(10**(len(str(max_data)) - 2)))}" + 'M PCS' if len(str(i)) > 4 and int(
-                i // (10 ** (len(str(max_data)) - 3))) % 60 == 0 else "" for i in yticks_positions]
-            # for bar in last_month_bars:
-            #     height = bar.get_height()
-            #     ax1.text(
-            #         bar.get_x() + bar.get_width() / 2,
-            #         height,
-            #         f'{int(height/(10**(len(str(max_data)) - 3)))}'.replace('.', ',')[:4] if height > 0 else '',
-            #         ha='center', va='bottom', fontsize=8  # Align the text
-            #     )
-            for bar in this_month_bars:
+            yticks_labels = [f"{int(i//(10**(len(str(max_data)) - 1)))}" + '百萬' if len(str(i)) > 4 and int(
+                i // (10 ** (len(str(max_data))))) % 60 == 0 else "" for i in yticks_positions]
+
+            for index, bar in enumerate(this_month_bars):
                 height = bar.get_height()
+                unfinish_height = unfinish_bars[index].get_height()
                 ax1.text(
                     bar.get_x() + bar.get_width() / 2,
-                    height,
-                    f'{int(height/(10**(len(str(max_data)) - 3)))}'.replace('.', ',')[:4] if height > 0 else '',
-                    ha='center', va='bottom', fontsize=8  # Align the text
+                    height+unfinish_height,
+                    f'{round(height/(10**(len(str(max_data)) - 1)),2)}'[:4] if height > 0 else '',
+                    ha='center', va='bottom', fontsize=12  # Align the text
                 )
         yticks_labels[-1] = ""
         ax1.set_yticks(yticks_positions)
@@ -530,7 +669,7 @@ class mes_weekly_report(object):
         sr_target = "達成率目標%"
         # Chart Label
         ry_label = "達成率(%)"
-        ly_label = "Product (M PCS)"
+        ly_label = "Product (百萬)"
         if self.mode == "WEEKLY":
             name = f"{this_start_date.strftime('%m/%d')}-{this_end_date.strftime('%m/%d')}"
             title = f"\n{plant} 第{last_week_info}週({name})目標達成率\n"
@@ -552,7 +691,7 @@ class mes_weekly_report(object):
         yticks_labels = [f"{i}" + '%' for i in yticks_positions]
         yticks_labels[-1] = ""
         ax2.set_yticks(yticks_positions)
-        ax2.set_yticklabels(yticks_labels)
+        ax2.set_yticklabels(yticks_labels, fontsize=12)
         ax2.axhline(y=target_rate, color='red', linestyle='--', linewidth=1, label=sr_target)
         #ax2.axhline(y=95, color='red', linestyle='--', linewidth=1)
 
@@ -586,7 +725,7 @@ class mes_weekly_report(object):
             handles1 + handles2,
             labels1 + labels2,
             loc='center left',
-            fontsize=10,
+            fontsize=12,
             title="Note",
             title_fontsize=12,
             bbox_to_anchor=(1.0, 0.5),
@@ -644,6 +783,13 @@ class mes_weekly_report(object):
         plt.close()
         self.image_buffers.append(chart_img)
 
+    # 過濾掉無效數據 (scrap 和 secondgrade)
+    def filter_valid_data(self, x_range, y_values):
+        filtered_x = [x for i, x in enumerate(x_range) if
+                      y_values[i] is not None and not np.isnan(y_values[i])]
+        filtered_y = [y for y in y_values if y is not None and not np.isnan(y)]
+        return filtered_x, filtered_y
+
     def rate_chart(self, plant):
         this_start_date = self.this_start_date
         this_end_date = self.this_end_date
@@ -655,11 +801,7 @@ class mes_weekly_report(object):
         else:
             plant_ = 'PVC1'
 
-        sql_ = f"""
-                select name FROM [PMGMES].[dbo].[PMG_DML_DataModelList] 
-                where DataModelTypeId = 'DMT000003' and name like '%{plant_}%' order by name
-            """
-        data1 = mes_database().select_sql_dict(sql_)
+        data1 = self.mach_list
 
         sql = f"""WITH raw_data AS (
                         SELECT name, date, 
@@ -696,34 +838,70 @@ class mes_weekly_report(object):
         secondgrade = [round((item['secondgrade'] / item['sum_qty']) * 100, 2) if item['sum_qty'] > 0 else 0 for item in
                        data]
 
+        # 過濾 scrap 數據
+        filtered_x_scrap, filtered_scrap = self.filter_valid_data(x_range, scrap)
+
+        # 過濾 secondgrade 數據
+        filtered_x_secondgrade, filtered_secondgrade = self.filter_valid_data(x_range, secondgrade)
+
+        # Create the figure and subplots
         plt.figure(figsize=(16, 9))
-        fig, ax1 = plt.subplots(figsize=(16, 9))
+        fig = plt.figure(figsize=(16, 9))
+        gs = gridspec.GridSpec(2, 1, height_ratios=[1, 1], hspace=0)  # No space between subplots
 
-        # Plotting lines
-        ax1.plot(x_range, scrap, label="報廢率 (%)", marker='o', linestyle='-', color='#ED7D31', linewidth=2)
-        ax1.plot(x_range, secondgrade, label="二級品率 (%)", marker='o', linestyle='-', color='#70AD47', linewidth=2)
+        # Subplot for scrap
+        y_max1 = 3
+        y_ticks = np.arange(0, y_max1, 0.4)  # 分成10個刻度
+        y_ticks = y_ticks[:-1]
 
-        # Adding standard line
-        ax1.axhline(y=0.8, color='#ED7D31', linestyle='--', linewidth=1.5, label="廢 品標準線(0.8)")
-        ax1.axhline(y=0.2, color='#70AD47', linestyle='--', linewidth=1.5, label="二級品標準線(0.2)")
-
-        # Adding data labels
-        for i, (scrap_val, secondgrade_val) in enumerate(zip(scrap, secondgrade)):
-            if scrap_val > 0:
-                ax1.text(i, scrap_val, f"{scrap_val:.2f}", ha='center', va='bottom', fontsize=8, color='#ED7D31')
-            if secondgrade_val > 0:
-                ax1.text(i, secondgrade_val, f"{secondgrade_val:.2f}", ha='center', va='bottom', fontsize=8,
-                         color='#70AD47')
-
+        ax1 = fig.add_subplot(gs[0])
+        ax1.plot(filtered_x_scrap, filtered_scrap, label="廢品率 (%)", marker='o', linestyle='-', color='#ED7D31',
+                 linewidth=2)
+        ax1.axhline(y=0.8, color='#ED7D31', linestyle='--', linewidth=1.5, label="廢品標準線(0.8)")
         ax1.set_xticks(x_range)
-        ax1.set_xticklabels(x_labels, rotation=0, ha="center", fontsize=12)
-        ax1.set_ylabel('二級品及報廢率 (%)', fontsize=12)
-        ax1.set_title(f"二級品及報廢率 ({plant})", fontsize=20)
+        ax1.set_xticklabels([])  # Hide x-axis labels for the top plot
+        # ax1.set_ylabel('廢品率 (%)', fontsize=12, rotation=0)
+        ax1.text(-0.1, 0.6, '廢品率 (%)', fontsize=12, rotation=0, ha='center', va='center', transform=ax1.transAxes)
+        ax1.set_ylim(0, y_max1)
+        ax1.set_yticks(y_ticks)
+        ax1.yaxis.set_major_formatter(FuncFormatter(self.add_percent))
 
-        handles, labels = ax1.get_legend_handles_labels()
+        offset = 0.03
+        for i, scrap_val in enumerate(filtered_scrap):
+            ax1.text(filtered_x_scrap[i], scrap_val+offset, f"{scrap_val:.2f}%", ha='center', va='bottom', fontsize=12,
+                     color='#ED7D31')
+
+        # Subplot for secondgrade
+        y_max2 = 1.6
+        y_ticks = np.arange(0, y_max2, 0.2)  # 分成10個刻度
+        y_ticks = y_ticks[:-1]
+
+        ax2 = fig.add_subplot(gs[1])
+        ax2.plot(filtered_x_secondgrade, filtered_secondgrade, label="二級品率 (%)", marker='o', linestyle='-',
+                 color='#70AD47', linewidth=2)
+        ax2.axhline(y=0.2, color='#70AD47', linestyle='--', linewidth=1.5, label="二級品標準線(0.2)")
+        ax2.set_xticks(x_range)
+        ax2.set_xticklabels(x_labels, rotation=0, ha="center", fontsize=12)
+        # ax2.set_ylabel('二級品率 (%)', fontsize=12, rotation=0)
+        ax2.text(-0.1, 0.6, '二級品率 (%)', fontsize=12, rotation=0, ha='center', va='center', transform=ax2.transAxes)
+        ax2.set_ylim(0, y_max2)
+        ax2.set_yticks(y_ticks)
+        ax2.yaxis.set_major_formatter(FuncFormatter(self.add_percent))
+
+        offset = 0.03
+        for i, secondgrade_val in enumerate(filtered_secondgrade):
+            ax2.text(filtered_x_secondgrade[i], secondgrade_val+offset, f"{secondgrade_val:.2f}%", ha='center', va='bottom',
+                     fontsize=12, color='#70AD47')
+
+        # Add a title for the entire figure
+        fig.suptitle(f"二級品及廢品率 ({plant})", fontsize=20)
+
+        # Add legend for both plots
+        handles1, labels1 = ax1.get_legend_handles_labels()
+        handles2, labels2 = ax2.get_legend_handles_labels()
         fig.legend(
-            handles,
-            labels,
+            handles1 + handles2,
+            labels1 + labels2,
             loc='center left',
             fontsize=10,
             title="Note",
@@ -739,6 +917,51 @@ class mes_weekly_report(object):
 
         plt.savefig(chart_img, dpi=100, bbox_inches="tight", pad_inches=0.45)
         plt.close()
+
+        self.image_buffers.append(chart_img)
+
+    def chart_table(self, plant, x_labels, secondgrade, scrap):
+        date_mark = self.date_mark
+        save_path = self.save_path
+
+        table_data = [
+            [plant] + x_labels,
+            ["廢品(%)"] + scrap,
+            ["二級品(%)"] + secondgrade,
+        ]
+
+        # 創建圖表
+        fig, ax = plt.subplots(figsize=(12, 3))  # 調整尺寸以適配內容
+        ax.axis("tight")
+        ax.axis("off")
+
+        # 添加表格
+        table = ax.table(cellText=table_data, loc="center", cellLoc="center")
+
+        font_path = font_manager.findfont("Microsoft YaHei")
+        font_prop = font_manager.FontProperties(fname=font_path, size=14)
+        header_color = "#0A4E9B"
+        row_colors = ["#E8F3FF", "#FFFFFF"]
+
+        for (row, col), cell in table.get_celld().items():
+            cell.set_width(0.1)
+            # Header styling
+            if row == 0:
+                cell.set_facecolor(header_color)
+                cell.set_text_props(color="white", weight="bold", fontproperties=font_prop)
+            # Row styling
+            else:
+                cell.set_facecolor(row_colors[row % 2])
+                cell.set_text_props(fontproperties=font_prop)
+            # Adjust height for all cells
+            cell.set_height(0.2)
+
+        plt.tight_layout(rect=[0, 0, 0, 0])
+        file_name = f'MES_{plant}_{date_mark}_Rate_Chart_Table.png'
+        chart_img = os.path.join(save_path, file_name)
+        plt.savefig(chart_img, bbox_inches="tight", dpi=100, pad_inches=0)
+        plt.close()
+
         self.image_buffers.append(chart_img)
 
     def send_email(self, file_list, image_buffers):
@@ -860,62 +1083,100 @@ class mes_weekly_report(object):
 
         return smtp_config, to_emails, admin_emails
 
+    def generate_previous_weeks_with_dates(self):
+        weeks_to_generate = 15
+        # 獲取今天的日期
+        today = datetime.now()
+
+        # 計算上一週的週一（開始日期）和週日（結束日期）
+        last_week_start = today - timedelta(days=today.weekday() + 7)  # 上週週一
+        last_week_end = last_week_start + timedelta(days=6)  # 上週週日
+
+        # 獲取上一週的年份與週數
+        year, week = last_week_start.isocalendar()[:2]
+
+        weeks_list = []
+        week_dates = []
+
+        # 添加上一週及其日期範圍
+        weeks_list.append(f"W{week}")
+        week_dates.append([last_week_start.date(), last_week_end.date()])
+
+        # 向前推算其餘 51 週
+        for _ in range(weeks_to_generate-1):
+            # 向前推一週
+            last_week_start -= timedelta(weeks=1)
+            last_week_end = last_week_start + timedelta(days=6)
+
+            # 計算週別
+            year, week = last_week_start.isocalendar()[:2]
+
+            # 添加到列表
+            #weeks_list.append(f"{year} W{week}")
+            weeks_list.append(f"W{week}")
+            week_dates.append([last_week_start.date(), last_week_end.date()])
+
+        # 反轉列表，使週別和日期按照時間順序排列
+        weeks_list.reverse()
+        week_dates.reverse()
+
+        return weeks_list, week_dates
+
+    def add_percent(self, y, pos):
+        return f"{y:.1f}%"  # 格式化為整數百分比
+
     def weekly_chart(self, plant):
         save_path = self.save_path
-        if plant == 'NBR':
-            plant_ = 'NBR'
-        else:
-            plant_ = 'PVC1'
-        sql_ = f"""
-                select name FROM [PMGMES].[dbo].[PMG_DML_DataModelList] 
-                where DataModelTypeId = 'DMT000003' and name like '%{plant_}%' order by name
-            """
-        data1 = mes_database().select_sql_dict(sql_)
+
+        data1 = self.mach_list
+
         for machine in data1:
             try:
                 this_data = []
                 this_rate = []
                 x_labels = []
                 week_date = []
+                unfinish_data = []
 
                 today = datetime.now()
 
-                # Get the starting week (Sep 30)
-                start_date = datetime(2024, 10, 1)
-                start_week_number = 41
-                weeks_to_generate = 52
+                if machine['name'] in ['VN_GD_PVC1_L01', 'VN_GD_PVC1_L02']:
+                    start_date = date(2025, 1, 6)
+                    start_week_number = 1
+                elif machine['name'] in ['VN_GD_PVC1_L05', 'VN_GD_PVC1_L06']:
+                    start_date = date(2024, 12, 2)
+                    start_week_number = 49
+                else:
+                    # Get the starting week (Sep 30)
+                    start_date = date(2024, 9, 30)
+                    start_week_number = 40
 
-                current_date = start_date
-                current_week_number = start_week_number
-
-                while current_date <= today:
-                    week_start = current_date
-                    week_end = current_date + timedelta(days=6)
-
-                    if today < week_end:
-                        break
-
-                    week_number = (current_week_number - 1) % 52 + 1
-                    x_labels.append(f'W{week_number}')
-
-                    week_date.append([week_start, week_end])
-
-                    current_date += timedelta(days=7)
-                    current_week_number += 1
+                x_labels, week_date = self.generate_previous_weeks_with_dates()
 
                 print(machine['name'])
                 for i, item in enumerate(week_date):
-                    print(f"Week {i + 1 } - start {item[0]} - end - {item[1]}")
-                    sql = f"""SELECT name, sum(case when sum_qty > 0 then sum_qty else 0 end) as qty, sum(case when target > 0 then target else 0 end) as target
+                    week_name = x_labels[i]
+                    if item[0] < start_date:
+                        this_data.append(0)
+                        this_rate.append(0)
+                        unfinish_data.append(0)
+                        continue
+
+                    print(f"Week {week_name} - start {item[0]} - end - {item[1]}")
+                    sql = f"""
+                            SELECT name,qty, target, (case when target-qty > 0 then target-qty else 0 end) unfinish_qty FROM (
+                            SELECT name, sum(case when sum_qty > 0 then sum_qty else 0 end) as qty, sum(case when target > 0 then target else 0 end) as target
                             FROM [MES_OLAP].[dbo].[mes_daily_report_raw] where Name = '{machine['name']}'
                             and (belong_to between '{item[0]}' and '{item[1]}')
-                            group by name"""
+                            group by name) A"""
                     rows = vnedc_database().select_sql_dict(sql)
                     if len(rows) == 0:
                         this_data.append(0)
                         this_rate.append(0)
+                        unfinish_data.append(0)
                     else:
                         this_data.append(rows[0]['qty'])
+                        unfinish_data.append(rows[0]['unfinish_qty'])
                         try:
                             rate = int((rows[0]['qty'] / rows[0]['target']) * 100) if rows[0]['target'] > 0 else 100
                         except Exception as e:
@@ -928,7 +1189,7 @@ class mes_weekly_report(object):
                 x_range = range(0, len(x_labels) * 2, 2)
 
                 max_data = max(this_data, default=0)
-                step_data = 5
+                step_data = 10
                 rounded_max_data = int(
                     (((max_data / (10 ** (len(str(max_data)) - 2))) // step_data) * step_data + step_data) * (
                                 10 ** (len(str(max_data)) - 2)))
@@ -938,40 +1199,44 @@ class mes_weekly_report(object):
                 rounded_step_rate = 20
 
                 bar_width = 0.6
-                plt.figure(figsize=(16, 9))
-                fig, ax1 = plt.subplots(figsize=(16, 9))
+                plt.figure(figsize=(24, 9))
+                fig, ax1 = plt.subplots(figsize=(24, 9))
                 this_month_bars = ax1.bar([i for i in x_range], this_data, width=bar_width,
                                           label=f"週產量", align='center', color='#10ba81')
+                unfinish_bars = ax1.bar([i for i in x_range], unfinish_data, width=bar_width, bottom=this_data,
+                                        label=f"週目標差異",
+                                        align='center', color='lightgreen')
                 ax1.set_xticks(x_range)
                 ax1.set_xticklabels(x_labels, rotation=0, ha="center", fontsize=12)
                 if len(str(max_data)) > 7:
                     yticks_positions = list(range(0, rounded_max_data + 1 * rounded_step_data, rounded_step_data))
                     yticks_positions.append(int(rounded_max_data + 2 * rounded_step_data))
                     yticks_labels = [
-                        f"{int(i//(10**(len(str(max_data)) - 2)))}" + 'M PCS' if len(str(i)) > 6 else f"{i}" for i
+                        f"{int(i//(10**(len(str(max_data)) - 2)))}" + '百萬' if len(str(i)) > 6 else f"{i}" for i
                         in yticks_positions]
-                    for bar in this_month_bars:
+                    for index, bar in enumerate(this_month_bars):
                         height = bar.get_height()
+                        unfinish_height = unfinish_bars[index].get_height()
                         ax1.text(
                             bar.get_x() + bar.get_width() / 2,
-                            height,
-                            f'{round(height/(10**(len(str(max_data)) - 2)),2)}'.replace('.', ',')[
-                            :4] if height > 0 else '',
-                            ha='center', va='bottom', fontsize=8  # Align the text
+                            height + unfinish_height,
+                            f'{round(height/(10**(len(str(max_data)) - 2)),2)}'[:4] if height > 0 else '',
+                            ha='center', va='bottom', fontsize=12  # Align the text
                         )
                 elif 4 < len(str(max_data)) <= 7:
                     yticks_positions = list(range(0, rounded_max_data, rounded_step_data))
                     yticks_positions.append(int(rounded_max_data + 3 * rounded_step_data))
                     # yticks_labels = [f"{int(i//(10**(len(str(max_data)) - 3)))}" + '萬 PCS' if len(str(i)) > 4 and int(
                     #     i // (10 ** (len(str(max_data)) - 3))) % 60 == 0 else "" for i in yticks_positions]
-                    yticks_labels = [f"{int(i/1000000)} M PCS" if i > 0 else 0 for i in yticks_positions]
-                    for bar in this_month_bars:
+                    yticks_labels = [f"{int(i/1000000)} 百萬" if i > 0 else 0 for i in yticks_positions]
+                    for index, bar in enumerate(this_month_bars):
                         height = bar.get_height()
+                        unfinish_height = unfinish_bars[index].get_height()
                         ax1.text(
                             bar.get_x() + bar.get_width() / 2,
-                            height,
-                            f'{int(height/(10**(len(str(max_data)) - 3)))}'.replace('.', ',')[:4] if height > 0 else '',
-                            ha='center', va='bottom', fontsize=10  # Align the text
+                            height + unfinish_height,
+                            f'{round(height/(10**(len(str(max_data)) - 1)),2)}'[:4] if height > 0 else '',
+                            ha='center', va='bottom', fontsize=12  # Align the text
                         )
 
                 yticks_labels[-1] = ""
@@ -989,7 +1254,7 @@ class mes_weekly_report(object):
                 sr_target = "達成率目標"
 
                 ry_label = "達成率(%)"
-                ly_label = "Product (M PCS)"
+                ly_label = "Product (百萬)"
 
                 name = f"各週產出量"
                 title = f"\n{plant} ({machine['name']})\n"
@@ -1020,7 +1285,7 @@ class mes_weekly_report(object):
                         x_range[i],
                         value + 1.5,
                         f"{value:.1f}%" if value != 0 else '',
-                        ha='center', va='bottom', fontsize=10, color='white',
+                        ha='center', va='bottom', fontsize=12, color='white',
                         bbox=dict(facecolor='#ED7D31', edgecolor='none', boxstyle='round,pad=0.3')
                     )
 
@@ -1030,7 +1295,7 @@ class mes_weekly_report(object):
                     handles1 + handles2,
                     labels1 + labels2,
                     loc='center left',
-                    fontsize=10,
+                    fontsize=12,
                     title="Note",
                     title_fontsize=12,
                     bbox_to_anchor=(1.0, 0.5),
@@ -1086,15 +1351,9 @@ class mes_weekly_report(object):
                 pass
     def monthly_chart(self, plant):
         save_path = self.save_path
-        if plant == 'NBR':
-            plant_ = 'NBR'
-        else:
-            plant_ = 'PVC1'
-        sql_ = f"""
-                select name FROM [PMGMES].[dbo].[PMG_DML_DataModelList] 
-                where DataModelTypeId = 'DMT000003' and name like '%{plant_}%' order by name
-            """
-        data1 = mes_database().select_sql_dict(sql_)
+
+        data1 = self.mach_list
+
         for machine in data1:
             print(f"Machine {machine}")
             try:
@@ -1103,6 +1362,7 @@ class mes_weekly_report(object):
                 this_data = []
                 this_rate = []
                 x_labels = []
+                unfinish_data = []
 
                 for i in range(12):
                     end_date = (today - relativedelta(months=i)).replace(day=1) - timedelta(days=1)
@@ -1113,16 +1373,20 @@ class mes_weekly_report(object):
                 x_labels.reverse()
                 for i, item in enumerate(month_date):
                     print(f"Month {item[2]} - start {item[0]} - end - {item[1]}")
-                    sql = f"""SELECT name, sum(case when sum_qty > 0 then sum_qty else 0 end) as qty, sum(case when target > 0 then target else 0 end) as target
+                    sql = f"""
+                            SELECT name,qty, target, (case when target-qty > 0 then target-qty then 0 end) unfinish_qty FROM (
+                            SELECT name, sum(case when sum_qty > 0 then sum_qty else 0 end) as qty, sum(case when target > 0 then target else 0 end) as target
                             FROM [MES_OLAP].[dbo].[mes_daily_report_raw] where Name = '{machine['name']}'
                             and (belong_to between '{item[0]}' and '{item[1]}')
-                            group by name"""
+                            group by name) A"""
                     rows = vnedc_database().select_sql_dict(sql)
                     if len(rows) == 0:
                         this_data.append(0)
                         this_rate.append(0)
+                        unfinish_data.append(0)
                     else:
                         this_data.append(rows[0]['qty'])
+                        unfinish_data.append(rows[0]['unfinish_qty'])
                         try:
                             rate = int((rows[0]['qty'] / rows[0]['target']) * 100) if rows[0]['target'] > 0 else 100
                         except Exception as e:
@@ -1147,37 +1411,42 @@ class mes_weekly_report(object):
                 plt.figure(figsize=(16, 9))
                 fig, ax1 = plt.subplots(figsize=(16, 9))
                 this_month_bars = ax1.bar([i for i in x_range], this_data, width=bar_width,
-                                          label=f"週產量", align='center', color='#10ba81')
+                                          label=f"月產量", align='center', color='#10ba81')
+                unfinish_bars = ax1.bar([i for i in x_range], unfinish_data, width=bar_width, bottom=this_data,
+                                        label=f"月目標差異",
+                                        align='center', color='lightgreen')
                 ax1.set_xticks(x_range)
                 ax1.set_xticklabels(x_labels, rotation=0, ha="center", fontsize=12)
                 if len(str(max_data)) > 7:
                     yticks_positions = list(range(0, rounded_max_data + 1 * rounded_step_data, rounded_step_data))
                     yticks_positions.append(int(rounded_max_data + 2 * rounded_step_data))
                     yticks_labels = [
-                        f"{int(i//(10**(len(str(max_data)) - 2)))}" + 'M PCS' if len(str(i)) > 6 else f"{i}" for i
+                        f"{int(i//(10**(len(str(max_data)) - 2)))}" + '百萬' if len(str(i)) > 6 else f"{i}" for i
                         in yticks_positions]
-                    for bar in this_month_bars:
+                    for index, bar in enumerate(this_month_bars):
                         height = bar.get_height()
+                        unfinish_height = unfinish_bars[index].get_height()
                         ax1.text(
                             bar.get_x() + bar.get_width() / 2,
-                            height,
-                            f'{round(height/(10**(len(str(max_data)) - 2)),2)}'.replace('.', ',')[
+                            height + unfinish_height,
+                            f'{round(height/(10**(len(str(max_data)) - 2)),2)}'[
                             :4] if height > 0 else '',
-                            ha='center', va='bottom', fontsize=8  # Align the text
+                            ha='center', va='bottom', fontsize=12  # Align the text
                         )
                 elif 4 < len(str(max_data)) <= 7:
                     yticks_positions = list(range(0, rounded_max_data, rounded_step_data))
                     yticks_positions.append(int(rounded_max_data + 3 * rounded_step_data))
                     # yticks_labels = [f"{int(i//(10**(len(str(max_data)) - 3)))}" + '萬 PCS' if len(str(i)) > 4 and int(
                     #     i // (10 ** (len(str(max_data)) - 3))) % 60 == 0 else "" for i in yticks_positions]
-                    yticks_labels = [f"{int(i/1000000)} M PCS" if i > 0 else 0 for i in yticks_positions]
-                    for bar in this_month_bars:
+                    yticks_labels = [f"{int(i/1000000)} 百萬" if i > 0 else 0 for i in yticks_positions]
+                    for index, bar in enumerate(this_month_bars):
                         height = bar.get_height()
+                        unfinish_height = unfinish_bars[index].get_height()
                         ax1.text(
                             bar.get_x() + bar.get_width() / 2,
-                            height,
-                            f'{int(height/(10**(len(str(max_data)) - 3)))}'.replace('.', ',')[:4] if height > 0 else '',
-                            ha='center', va='bottom', fontsize=10  # Align the text
+                            height + unfinish_height,
+                            f'{int(height/(10**(len(str(max_data)) - 3)))}'[:4] if height > 0 else '',
+                            ha='center', va='bottom', fontsize=12  # Align the text
                         )
 
                 yticks_labels[-1] = ""
@@ -1195,7 +1464,7 @@ class mes_weekly_report(object):
                 sr_target = "達成率目標"
 
                 ry_label = "達成率(%)"
-                ly_label = "Product (M PCS)"
+                ly_label = "Product (百萬)"
 
                 name = f"各週產出量"
                 title = f"\n{plant} ({machine['name']})\n"
@@ -1290,17 +1559,72 @@ class mes_weekly_report(object):
             except:
                 pass
 
+    def get_mach_list(self, plant):
+        if plant == 'NBR':
+            plant_ = 'NBR'
+        else:
+            plant_ = 'PVC1'
+
+        sql = f"""
+                        select name FROM [PMGMES].[dbo].[PMG_DML_DataModelList] 
+                        where DataModelTypeId = 'DMT000003' and name like '%{plant_}%' 
+                        and name not in ('VN_GD_PVC1_L03','VN_GD_PVC1_L04')
+                        order by name
+                    """
+        data = mes_database().select_sql_dict(sql)
+
+        return data
+
     def main(self):
         for plant in self.plant_name:
-            self.generate_chart(plant)
-            if self.mode == 'WEEKLY':
-                self.weekly_chart(plant)
-            if self.mode == 'MONTHLY':
-                self.monthly_chart(plant)
-            self.rate_chart(plant)
+            self.mach_list = self.get_mach_list(plant)
+            # self.generate_chart(plant)
+            # if self.mode == 'WEEKLY':
+            #     self.weekly_chart(plant)
+            # if self.mode == 'MONTHLY':
+            #     self.monthly_chart(plant)
+            # self.rate_chart(plant)
             self.generate_raw_excel(plant)
-        self.send_email(self.file_list, self.image_buffers)
 
+        # self.send_email(self.file_list, self.image_buffers)
+
+    def delete_counting_weekly_info_raw(self, plant, year, month_week):
+        mes_olap = mes_olap_database()
+        sql = f"""
+            delete from [MES_OLAP].[dbo].[counting_weekly_info_raw]
+            where Plant = '{plant}' and [Year] = {year} and MonthWeek = '{month_week}'
+        """
+        mes_olap.execute_sql(sql)
+
+    def insert_counting_weekly_info_raw(self, plant, year, month_week, summary_df):
+        mes_olap = mes_olap_database()
+        # Only show data which activation not null
+        df = summary_df.loc[summary_df["稼動率"].notna() & (summary_df["稼動率"] != "")]
+
+        counting_sum = df["點數機數量"].sum()
+        separate_sum = df["隔離品數量"].sum()
+        target_sum = df["目標產能"].sum()
+        onlinePacking_sum = df["包裝確認量"].sum()
+        faulty_sum = df["二級品數量"].sum()
+        scrap_sum = df["廢品數量"].sum()
+
+        speed_avg = round(df["標準車速"].mean(), 0)
+        activation_avg = round(df["稼動率"].mean(), 3)
+        capacity_avg = round(df["產能效率"].mean(), 3)
+        yield_avg = round(df["良率"].mean(), 3)
+        oee_avg = round(activation_avg*capacity_avg*yield_avg, 3)
+
+        separate_rate = round(separate_sum / (counting_sum + faulty_sum + scrap_sum), 3)
+        scrap_rate = round(scrap_sum / (counting_sum + faulty_sum + scrap_sum), 3)
+
+        sql = f"""
+        Insert into [MES_OLAP].[dbo].[counting_weekly_info_raw](Plant, [Year], MonthWeek, CountingQty, SeparateQty, AvgSpeed, 
+        Activation, Capacity, Yield, OEE, SeparateRate, ScrapRate, Target, OnlinePacking)
+        Values('{plant}', {year}, '{month_week}', {counting_sum}, {separate_sum}, {speed_avg}, 
+        {activation_avg}, {capacity_avg},{yield_avg},{oee_avg},{separate_rate},{scrap_rate},{target_sum},{onlinePacking_sum})
+        """
+        print(sql)
+        mes_olap.execute_sql(sql)
 
 import argparse
 from datetime import datetime, timedelta, date
