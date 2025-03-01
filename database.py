@@ -5,7 +5,7 @@ from sqlite3 import Error
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class mes_olap_database:
-    server = '192.168.11.31'
+    server = '10.13.104.181'
     database = 'MES_OLAP'
     username = 'vnedc'
     password = 'vnedc#2024'
@@ -32,6 +32,12 @@ class mes_olap_database:
         self.conn = self.create_mes_olap_connection()
         self.cur = self.conn.cursor()
         self.cur.execute(sql)
+        self.conn.commit()
+
+    def execute_sql_values(self, sql, values):
+        self.conn = self.create_mes_olap_connection()
+        self.cur = self.conn.cursor()
+        self.cur.execute(sql, values)
         self.conn.commit()
 
     def create_mes_olap_connection(self):
