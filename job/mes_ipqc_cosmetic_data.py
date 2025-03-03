@@ -55,32 +55,46 @@ class MES_IPQC_COSMETIC(object):
                   AND (((r.InspectionDate = '{self.date1}' AND r.Period BETWEEN 6 AND 23)
                     OR (r.InspectionDate = DATEADD(DAY, 1, '{self.date2}') AND r.Period BETWEEN 0 AND 5))
                     OR (r.InspectionDate between DATEADD(DAY, 1, '{self.date1}') AND '{self.date2}'))
-                  AND TRY_CAST(SUBSTRING(JsonData,CHARINDEX(',',JsonData)-1,1) AS Int) > 0
                 """
         raws = mes_db.select_sql_dict(sql)
 
         for raw in raws:
             runcard = raw['RunCardId']
-            odata = json.loads(raw['JsonData'])
-            create_time = raw['CreationTime'][:19]
-            inspect_qty = raw['CosmeticInspectionQty']
             partno = raw['PartNo']
             product_item = raw['ProductItem']
             customer_code = raw['CustomerCode']
             customer_name = raw['CustomerName']
             customer_partno = raw['CustomerPartNo']
+            create_time = raw['CreationTime'][:19]
+            inspect_qty = raw['CosmeticInspectionQty']
+            odata = json.loads(raw['JsonData'])
 
-            for o in odata['CosmeticDefectCodes']:
-                defect_code = o['DefectCode']
-                qty = o['Qty']
+            if odata['CosmeticDefectQty'] > 0:
+                for o in odata['CosmeticDefectCodes']:
+                    defect_code = o['DefectCode']
+                    qty = o['Qty']
 
+                    sql = """
+                    INSERT INTO [MES_OLAP].[dbo].[mes_ipqc_cosmetic_data] 
+                        (PartNo, ProductItem, CustomerCode, CustomerName, CustomerPartNo, runcard, defect_code, qty, create_at, insert_at, cosmetic_inspect_qty)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?)
+                    """
+
+                    values = (partno, product_item, customer_code, customer_name, customer_partno, runcard, defect_code, qty, create_time, inspect_qty)
+
+                    mes_olap.execute_sql_values(sql, values)
+            else:
+                defect_code = ''
+                qty = 0
                 sql = """
-                INSERT INTO [MES_OLAP].[dbo].[mes_ipqc_cosmetic_data] 
-                    (PartNo, ProductItem, CustomerCode, CustomerName, CustomerPartNo, runcard, defect_code, qty, create_at, insert_at, cosmetic_inspect_qty)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?)
-                """
+                                    INSERT INTO [MES_OLAP].[dbo].[mes_ipqc_cosmetic_data] 
+                                        (PartNo, ProductItem, CustomerCode, CustomerName, CustomerPartNo, runcard, defect_code, qty, create_at, insert_at, cosmetic_inspect_qty)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?)
+                                    """
 
-                values = (partno, product_item, customer_code, customer_name, customer_partno, runcard, defect_code, qty, create_time, inspect_qty)
+                values = (
+                partno, product_item, customer_code, customer_name, customer_partno, runcard, defect_code, qty,
+                create_time, inspect_qty)
 
                 mes_olap.execute_sql_values(sql, values)
 
@@ -94,5 +108,8 @@ class MES_IPQC_COSMETIC(object):
 report_date1 = datetime.today() - timedelta(days=1)
 report_date1 = report_date1.strftime('%Y%m%d')
 
-obj = MES_IPQC_COSMETIC(report_date1, report_date1)
+report_date1 = '20250218'
+report_date2 = '20250301'
+
+obj = MES_IPQC_COSMETIC(report_date1, report_date2)
 obj.convert()

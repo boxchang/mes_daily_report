@@ -52,7 +52,7 @@ class mes_daily_report(object):
         'ProductionTime': '生產時間',
         'LineSpeedStd': '標準車速',
         'Target': '目標產能',
-        'Separate': '隔離',
+        'Separate': '針孔',
         'Scrap': '廢品',
         'SecondGrade': '二級品',
         'OverControl': '超內控',
@@ -264,6 +264,22 @@ class mes_daily_report(object):
 
         return result
 
+    def get_df_fix(self, report_date1, report_date2):
+        db = mes_olap_database()
+
+        sql = f"""
+        SELECT WorkDate CountingDate, Machine Name, Line, Period, MinSpeed, MaxSpeed, AvgSpeed, CountingQty
+          FROM [MES_OLAP].[dbo].[counting_daily_info_fix] where 
+          WorkDate between '{report_date1}' and '{report_date2}'
+        """
+
+        raws = db.select_sql_dict(sql)
+        df = pd.DataFrame(raws)
+
+        return df
+
+
+
     def main(self, fix_mode):
         report_date1 = self.report_date1
         report_date2 = self.report_date2
@@ -302,6 +318,16 @@ class mes_daily_report(object):
                 df_detail = self.get_df_detail(db, report_date1, report_date2, plant)
 
                 df_final = pd.merge(df_main, df_detail, on=['Name', 'Period', 'Line'], how='left')
+
+                df_fix = self.get_df_fix(report_date1, report_date2)
+
+                if len(df_fix) > 0:
+                    df_final = pd.merge(df_final, df_fix, on=['CountingDate', 'Name', 'Period', 'Line'], how='left')
+
+                    # 點數機資料修正
+                    df_final.loc[
+                        df_final["CountingQty"].notna(), ["max_speed", "min_speed", "avg_speed", "sum_qty"]] = \
+                        df_final.loc[df_final["CountingQty"].notna(), ["MaxSpeed", "MinSpeed", "AvgSpeed", "CountingQty"]].values
 
                 # 檢查欄位 LineSpeedStd 是否有空值
                 df_filtered = df_main[df_main['Line'].notnull()]
@@ -1354,8 +1380,8 @@ else:
     report_date2 = datetime.today()
     report_date2 = report_date2.strftime('%Y%m%d')
 
-    # report_date1 = "20241031"
-    # report_date2 = "20241101"
+    # report_date1 = "20250222"
+    # report_date2 = "20250223"
 
     report = mes_daily_report(report_date1, report_date2)
     report.main(fix_mode)
