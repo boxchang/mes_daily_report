@@ -545,7 +545,7 @@ class mes_daily_report(object):
                     WorkOrderDate,
                     CustomerName,
                     w.ProductItem,
-                    round((nss.{upper_column}+nss.{lower_column})/2,1) LineSpeedStd,
+                    nss.{upper_column} LineSpeedStd,
                     m.COUNTING_MACHINE,
                     w.PartNo,
                     w.AQL,
@@ -678,6 +678,7 @@ class mes_daily_report(object):
                 LEFT JOIN Scrap s ON wo.runcard = s.runcardId
                 LEFT JOIN WorkInProcess t on wo.runcard = t.RunCardId
                 LEFT JOIN GoodStock gs on wo.runcard = gs.RunCardId
+                WHERE NOT (wo.WorkOrderId IS NOT NULL AND t.ActualQty IS NULL) --有小票才列入計算，主要是User會用錯RunCard，以有小票為主進行統計
             ORDER BY 
                 mach.Name, 
                 wo.Period, 
@@ -916,7 +917,7 @@ class mes_daily_report(object):
         comment = Comment(text="點數機(A1B1)生產時間/工單預計生產時間", author="System")
         comment.width = 600
         worksheet[colmn_letter['ActiveRate']+"1"].comment = comment
-        comment = Comment(text="(標準上限+標準下限)/2", author="System")
+        comment = Comment(text="標準上限", author="System")
         comment.width = 200
         worksheet[colmn_letter['LineSpeedStd'] + "1"].comment = comment
 

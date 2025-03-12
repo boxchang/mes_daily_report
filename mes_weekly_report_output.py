@@ -2,6 +2,7 @@ import sys
 import os
 from PIL import Image as PILImage
 from matplotlib.ticker import MultipleLocator, FuncFormatter
+from openpyxl.utils import get_column_letter
 
 from database import vnedc_database, mes_database, mes_olap_database
 from lib.utils import Utils
@@ -51,7 +52,7 @@ class mes_weekly_report(object):
 
     # Define Header
     header_font = Font(bold=True)
-    header_alignment = Alignment(horizontal='center', wrap_text=True)
+    header_alignment = Alignment(horizontal='center')
     header_border = Border(bottom=Side(style='thin'))
     header_columns = {
         'WorkDate': '作業日期',
@@ -158,7 +159,9 @@ class mes_weekly_report(object):
         'jp_ng_light_rate': '日線重量輕',
         'Gap': '差異',
         'SalePlaceCode': '銷售地點',
-        'runcard': 'Runcard'
+        'runcard': 'Runcard',
+        'Pinhole': '針孔數量',
+        'Pinhole_Sample': '針孔檢查數量'
 
     }
 
@@ -172,6 +175,7 @@ class mes_weekly_report(object):
 
     def __init__(self, mode):
         self.db = vnedc_database()
+        self.mes_db = mes_database()
         today = datetime.now().date()
         self.mode = mode
 
@@ -372,12 +376,12 @@ class mes_weekly_report(object):
                 mach_sum_df = self.ipqc_ng_data(machine_df)
                 mach_sum_list.append(mach_sum_df)
             all_mach_sum_df = pd.concat(mach_sum_list)
-            self.generate_ipqc_ng_data_excel(writer, all_mach_sum_df)
-
-            self.delete_counting_weekly_info_raw(plant, year, month_week)
-            self.insert_counting_weekly_info_raw(plant, year, month_week, summary_df)
-
-            self.generate_12aspect_output_excel(writer, plant)
+            # self.generate_ipqc_ng_data_excel(writer, all_mach_sum_df)
+            #
+            # self.delete_counting_weekly_info_raw(plant, year, month_week)
+            # self.insert_counting_weekly_info_raw(plant, year, month_week, summary_df)
+            #
+            # self.generate_12aspect_output_excel(writer, plant)
             self.generate_12aspect_cosmetic_excel(writer, plant, year, month_week)
             self.generate_12aspect_cosmetic_summary_excel(writer, plant, year, month_week)
 
@@ -525,7 +529,7 @@ class mes_weekly_report(object):
                                   column_letter['minor_rate'], column_letter['pinhole_rate'],
                                   ]:
                     cell.alignment = self.center_align_style.alignment
-                    cell.number_format = '0.0%'
+                    cell.number_format = '0.00%'
                     worksheet.column_dimensions[col_letter].width = 14
                 else:
                     cell.alignment = self.center_align_style.alignment
@@ -552,10 +556,10 @@ class mes_weekly_report(object):
                                   'ML9': 'AC', 'KN7': 'AD', 'EL1': 'AE', 'BL1': 'AF', 'FL2': 'AG', 'GL2': 'AH', 'BL3': 'AI', 'AL3': 'AJ', 'KN6': 'AK',
                                   'BL2': 'AL', 'BN7': 'AM', 'BN1': 'AN', 'HL1': 'AO', 'GN1': 'AP', 'KL2': 'AQ',
                                   'EN2': 'AR', 'CN1': 'AS', 'FN2': 'AT', 'KN4': 'AU', 'CL1': 'AV', 'BN2': 'AW', 'BN6': 'AX', 'DN1': 'AY', 'BN9': 'AZ',
-                                  'DL4': 'BA', 'BN8': 'BB', 'EL2': 'BC', 'FN1': 'BD', 'EN1': 'BE', 'BN5': 'BF', 'MX3': 'BG', 'CL3': 'BH', 'KN5': 'BI', 'DL3': 'BJ',
-                                  'B': 'BK', 'BT': 'BL', 'BT_1': 'BM', 'C': 'BN', 'C_1': 'BO', 'D1': 'BP', 'D1_1': 'BQ', 'D2': 'BR', 'D2_1': 'BS', 'D3': 'BT', 'D3_1': 'BU', 'D4': 'BV', 'D4_1': 'BW', 'D5': 'BX', 'D5_1': 'BY',
-                'K1': 'BZ', 'K1_1': 'CA', 'K2': 'CB', 'K2_1': 'CC', 'K3': 'CD', 'K3_1': 'CE', 'K4': 'CF', 'K4_1': 'CG',
-                'N1': 'CH', 'N1_1': 'CI', 'N2': 'CJ', 'N2_1': 'CK', 'N3': 'CL', 'N3_1': 'CM', 'N4': 'CN', 'N4_1': 'CO', 'N5': 'CP', 'N5_1': 'CQ', 'CHECK QTY': 'CR'
+                                  'DL4': 'BA', 'BN8': 'BB', 'EL2': 'BC', 'FN1': 'BD', 'EN1': 'BE', 'BN5': 'BF', 'MX3': 'BG', 'CL3': 'BH', 'KN5': 'BI', 'DL3': 'BJ', 'CHECK QTY': 'BK',
+                                  'B': 'BL', 'BT': 'BM', 'BT_1': 'BN', 'C': 'BO', 'C_1': 'BP', 'D1': 'BQ', 'D1_1': 'BR', 'D2': 'BS', 'D2_1': 'BT', 'D3': 'BU', 'D3_1': 'BV', 'D4': 'BW', 'D4_1': 'BX', 'D5': 'BY', 'D5_1': 'BZ',
+                                    'K1': 'CA', 'K1_1': 'CB', 'K2': 'CC', 'K2_1': 'CD', 'K3': 'CE', 'K3_1': 'CF', 'K4': 'CG', 'K4_1': 'CH',
+                                    'N1': 'CI', 'N1_1': 'CJ', 'N2': 'CK', 'N2_1': 'CL', 'N3': 'CM', 'N3_1': 'CN', 'N4': 'CO', 'N4_1': 'CP', 'N5': 'CQ', 'N5_1': 'CR', 'Pinhole': 'CS', 'Pinhole_Sample': 'CT',
                         }
 
         try:
@@ -625,7 +629,7 @@ class mes_weekly_report(object):
                      ]
             cosmetic_df = cosmetic_df.reindex(columns=order, fill_value='')
 
-
+            # 計算針孔Defect Code加總
             pinhole_sql = f"""
             SELECT r.runcard, d.defect_code, sum(qty) sum_qty
               FROM [MES_OLAP].[dbo].[counting_daily_info_raw] r
@@ -637,11 +641,29 @@ class mes_weekly_report(object):
             pinhole_data = self.db.select_sql_dict(pinhole_sql)
             pinhole_df = pd.DataFrame(pinhole_data)
             pinhole_df = pinhole_df.pivot(index="runcard", columns="defect_code", values="sum_qty").reset_index()
+            pinhole_df['Pinhole'] = pinhole_df.iloc[:, 1:-1].notna().any(axis=1).astype(int)
+
+            # 計算針孔樣本數
+            pinhole_sample_sql = f"""
+            SELECT r.Id runcard,WorkCenterTypeName, AQL AS WO_AQL
+              FROM [PMGMES].[dbo].[PMG_MES_RunCard] r
+              JOIN [PMGMES].[dbo].[PMG_MES_RunCard_IPQCInspectIOptionMapping] m on r.Id = m.RunCardId
+              JOIN [PMGMES].[dbo].[PMG_MES_WorkOrder] w on r.WorkOrderId = w.Id
+              where GroupType = 'Pinhole' and r.InspectionDate between '{self.this_start_date}' and '{self.this_end_date}'
+            """
+            pinhole_sample_data = self.mes_db.select_sql_dict(pinhole_sample_sql)
+            pinhole_sample_df = pd.DataFrame(pinhole_sample_data)
+
+            if plant == "PVC":
+                pinhole_sample_df['Pinhole_Sample'] = 25
+            elif plant == "NBR":
+                pinhole_sample_df['Pinhole_Sample'] = np.where(pinhole_sample_df['WO_AQL'] == '1.0', 50, 25)
 
             df = pd.merge(df, weight_df, on=['runcard'], how='left')
             df = pd.merge(df, cosmetic_df, on=['runcard'], how='left')
             df = pd.merge(df, pinhole_df, on=['runcard'], how='left')
             df = pd.merge(df, inspect_qty_df, on="runcard", how="left")
+            df = pd.merge(df, pinhole_sample_df, on="runcard", how="left")
             df = df.fillna('')
 
             sum_item = [
@@ -649,9 +671,14 @@ class mes_weekly_report(object):
                 "AL4", "KL3", "AL1", "IL1", "AL2", "AL5", "AL6", "KL4", "AL7", "IL2", "ML9", "KN7", "EL1", "BL1",
                 "FL2", "GL2", "BL3", "AL3", "KN6", "BL2", "BN7", "BN1", "HL1", "GN1", "KL2", "EN2", "CN1", "FN2", "KN4",
                 "CL1", "BN2", "BN6", "DN1", "BN9", "DL4", "BN8", "EL2", "FN1", "EN1", "BN5", "MX3", "CL3", "KN5", "DL3",
+                'inspect_qty',
                 'B', 'BT', 'BT_1', 'C', 'C_1', 'D1', 'D1_1', 'D2', 'D2_1', 'D3', 'D3_1', 'D4', 'D4_1', 'D5', 'D5_1',
                 'K1', 'K1_1', 'K2', 'K2_1', 'K3', 'K3_1', 'K4', 'K4_1',
-                'N1', 'N1_1', 'N2', 'N2_1', 'N3', 'N3_1', 'N4', 'N4_1', 'N5', 'N5_1', 'inspect_qty']
+                'N1', 'N1_1', 'N2', 'N2_1', 'N3', 'N3_1', 'N4', 'N4_1', 'N5', 'N5_1', 'Pinhole', 'Pinhole_Sample', ]
+
+            # 確保所有 defect_code 欄位都存在，順序與 expected_defect_codes 一致
+            all_columns = ['runcard', 'belong_to', 'Machine', 'Line', 'Shift', 'WorkOrder', 'PartNo', 'ProductItem', 'SalePlaceCode', 'Period'] + sum_item  # 保持固定順序
+            df = df.reindex(columns=all_columns, fill_value='')
 
             sum_list = {}
             for item in sum_item:
@@ -681,7 +708,7 @@ class mes_weekly_report(object):
 
             sum_LL1_7000 = sum_list['7000LL1']
             sum_LL2_7000 = sum_list['7000LL2']
-            count_7000_qty = (df['SalePlaceCode'] == 6300).sum()
+            count_7000_qty = (df['SalePlaceCode'] == 7000).sum()
             rate_LL1_7000 = round(sum_LL1_7000 / count_7000_qty, 4) if count_7000_qty > 0 else 0
             rate_LL2_7000 = round(sum_LL2_7000 / count_7000_qty, 4) if count_7000_qty > 0 else 0
 
@@ -706,12 +733,10 @@ class mes_weekly_report(object):
             minor_rate = round(sum_minor / sum_inspect_qty, 4)
             minor_dpm = round(minor_rate * 1000000, 0)
 
-            sum_pinhole = sum_list['B'] + sum_list['BT'] + sum_list['BT_1'] + sum_list['C'] + sum_list['C_1'] + sum_list['D1'] + sum_list['D1_1'] + \
-            sum_list['D2'] + sum_list['D2_1'] + sum_list['D3'] + sum_list['D3_1'] + sum_list['D5'] + sum_list['D5_1'] + \
-            sum_list['K1'] + sum_list['K1_1'] + sum_list['K2'] + sum_list['K2_1'] + sum_list['K3'] + sum_list['K3_1'] + sum_list['K4'] + sum_list['K4_1'] + \
-            sum_list['N1'] + sum_list['N1_1'] + sum_list['N2'] + sum_list['N2_1'] + sum_list['N3'] + sum_list['N3_1'] + sum_list['N4'] + sum_list['N4_1'] + sum_list['N5'] + sum_list['N5_1']
+            sum_pinhole = sum_list['Pinhole']
+            sum_pinhole_sample = sum_list['Pinhole_Sample']
 
-            pinhole_rate = round(sum_pinhole / sum_inspect_qty, 4)
+            pinhole_rate = round(sum_pinhole / sum_pinhole_sample, 4)
             pinhole_dpm = round(pinhole_rate * 1000000, 0)
 
             df = df.rename(columns=weight_header)
@@ -726,49 +751,85 @@ class mes_weekly_report(object):
             workbook = writer.book
             worksheet = writer.sheets[sheet_name]
 
+            # header_alignment = Alignment(horizontal='center', wrap_text=True)
+            header_alignment = Alignment(horizontal='center')
+            header_border = Border(
+                top=Side(style='medium'),
+                bottom=Side(style='medium'),
+                left=Side(style='medium'),
+                right=Side(style='medium')
+            )
+            fill_style = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+
             # Weight Header
             worksheet.merge_cells(f"{column_letter['6100LL1']}1:{column_letter['7000LL2']}1")
-            fill = PatternFill(start_color="CCECFF", end_color="CCECFF", fill_type="solid")
+            start_row, start_col = worksheet[f"{column_letter['6100LL1']}1"].row, worksheet[f"{column_letter['6100LL1']}1"].column
+            end_row, end_col = worksheet[f"{column_letter['7000LL2']}1"].row, worksheet[f"{column_letter['7000LL2']}1"].column
             cell = worksheet[f"{column_letter['6100LL1']}1"]
             cell.value = "重量檢驗"
             cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.fill = fill
+            # cell.border = header_border
+            for row in range(start_row, end_row + 1):
+                for col in range(start_col, end_col + 1):
+                    cell = worksheet.cell(row=row, column=col)
+                    cell.border = header_border
+                    cell.fill = fill_style
 
             # Cosmetic Header
             worksheet.merge_cells(f"{cosmetic_column_letter['AL4']}1:{cosmetic_column_letter['IL2']}1")
-            fill = PatternFill(start_color="F2CEEF", end_color="F2CEEF", fill_type="solid")
+            start_row, start_col = worksheet[f"{cosmetic_column_letter['AL4']}1"].row, worksheet[f"{cosmetic_column_letter['AL4']}1"].column
+            end_row, end_col = worksheet[f"{cosmetic_column_letter['IL2']}1"].row, worksheet[f"{cosmetic_column_letter['IL2']}1"].column
             cell = worksheet[f"{cosmetic_column_letter['AL4']}1"]
             cell.value = "外觀CRITICAL"
             cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.fill = fill
+            for row in range(start_row, end_row + 1):
+                for col in range(start_col, end_col + 1):
+                    cell = worksheet.cell(row=row, column=col)
+                    cell.border = header_border
+                    cell.fill = fill_style
 
             worksheet.merge_cells(f"{cosmetic_column_letter['ML9']}1:{cosmetic_column_letter['KL2']}1")
-            fill = PatternFill(start_color="FFFFCC", end_color="FFFFCC", fill_type="solid")
+            start_row, start_col = worksheet[f"{cosmetic_column_letter['ML9']}1"].row, worksheet[f"{cosmetic_column_letter['ML9']}1"].column
+            end_row, end_col = worksheet[f"{cosmetic_column_letter['KL2']}1"].row, worksheet[f"{cosmetic_column_letter['KL2']}1"].column
             cell = worksheet[f"{cosmetic_column_letter['ML9']}1"]
             cell.value = "外觀MAJOR"
             cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.fill = fill
+            for row in range(start_row, end_row + 1):
+                for col in range(start_col, end_col + 1):
+                    cell = worksheet.cell(row=row, column=col)
+                    cell.border = header_border
+                    cell.fill = fill_style
 
             worksheet.merge_cells(f"{cosmetic_column_letter['EN2']}1:{cosmetic_column_letter['DL3']}1")
-            fill = PatternFill(start_color="99FF66", end_color="99FF66", fill_type="solid")
+            start_row, start_col = worksheet[f"{cosmetic_column_letter['EN2']}1"].row, worksheet[f"{cosmetic_column_letter['EN2']}1"].column
+            end_row, end_col = worksheet[f"{cosmetic_column_letter['DL3']}1"].row, worksheet[f"{cosmetic_column_letter['DL3']}1"].column
             cell = worksheet[f"{cosmetic_column_letter['EN2']}1"]
             cell.value = "外觀MINOR"
             cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.fill = fill
+            for row in range(start_row, end_row + 1):
+                for col in range(start_col, end_col + 1):
+                    cell = worksheet.cell(row=row, column=col)
+                    cell.border = header_border
+                    cell.fill = fill_style
 
             # Pinhole Header
             worksheet.merge_cells(f"{cosmetic_column_letter['B']}1:{cosmetic_column_letter['N5_1']}1")
-            fill = PatternFill(start_color="FFCC66", end_color="FFCC66", fill_type="solid")
+            start_row, start_col = worksheet[f"{cosmetic_column_letter['B']}1"].row, worksheet[f"{cosmetic_column_letter['B']}1"].column
+            end_row, end_col = worksheet[f"{cosmetic_column_letter['N5_1']}1"].row, worksheet[f"{cosmetic_column_letter['N5_1']}1"].column
             cell = worksheet[f"{cosmetic_column_letter['B']}1"]
             cell.value = "針孔"
             cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.fill = fill
+            for row in range(start_row, end_row + 1):
+                for col in range(start_col, end_col + 1):
+                    cell = worksheet.cell(row=row, column=col)
+                    cell.border = header_border
+                    cell.fill = fill_style
 
             worksheet.freeze_panes = worksheet['A3']
 
             for cell in worksheet[2]:  # First line is Header
                 cell.font = self.header_font
-                cell.alignment = self.header_alignment
+                cell.alignment = header_alignment
                 cell.border = self.header_border
                 # Formatting
 
@@ -782,13 +843,31 @@ class mes_weekly_report(object):
                 for cell in col:
                     if col_letter in [column_letter['runcard'], column_letter['belong_to'], column_letter['Machine'],
                                       column_letter['Line'], column_letter['Shift'], column_letter['WorkOrder'],
-                                      column_letter['PartNo'], column_letter['ProductItem'] , column_letter['SalePlaceCode'],
+                                      column_letter['PartNo'], column_letter['ProductItem'], column_letter['SalePlaceCode'],
                                       column_letter['Period']]:
 
                         cell.alignment = self.center_align_style.alignment
 
                     # if col_letter in [colmn_letter['Activation'], colmn_letter['OEE']]:
                     #     worksheet.column_dimensions[col_letter].hidden = True
+
+            # 最後一行加總
+            thin_top_border = Border(top=Side(style="thin"))
+            last_row = worksheet.max_row+1
+
+            # K 欄 (11) 到 CT 欄 (96)
+            for col_idx in range(11, 98 + 1):
+                col_letter = get_column_letter(col_idx)
+
+                # 設定 SUM 公式
+                sum_formula = f"=SUM({col_letter}2:{col_letter}{last_row-1})"
+                worksheet[f"{col_letter}{last_row}"] = sum_formula  # ✅ 填入最後一行
+
+                # 在最後一行上方（倒數第 2 行）加上框線
+                if last_row > 1:  # 確保至少有兩行
+                    cell_above = worksheet[f"{col_letter}{last_row}"]
+                    cell_above.border = thin_top_border  # ✅ 設定上方框線
+
 
             delete_sql = f"""
             DELETE FROM [MES_OLAP].[dbo].[appearance_weekly_info_raw]
@@ -2079,12 +2158,12 @@ class mes_weekly_report(object):
     def main(self):
         for plant in self.plant_name:
             self.mach_list = self.get_mach_list(plant)
-            self.generate_chart(plant)
-            if self.mode == 'WEEKLY':
-                 self.weekly_chart(plant)
-            # if self.mode == 'MONTHLY':
-            #     self.monthly_chart(plant)
-            self.rate_chart(plant)
+            # self.generate_chart(plant)
+            # if self.mode == 'WEEKLY':
+            #      self.weekly_chart(plant)
+            # # if self.mode == 'MONTHLY':
+            # #     self.monthly_chart(plant)
+            # self.rate_chart(plant)
             self.generate_raw_excel(plant)
 
         self.send_email(self.file_list, self.image_buffers)
