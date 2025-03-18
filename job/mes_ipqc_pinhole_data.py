@@ -108,9 +108,9 @@ class MES_IPQC_PINHOLE(object):
 
 report_date1 = datetime.today() - timedelta(days=1)
 report_date1 = report_date1.strftime('%Y%m%d')
-
-report_date1 = '20250218'
-report_date2 = '20250301'
+report_date2 = report_date1
+# report_date1 = '20250304'
+# report_date2 = '20250305'
 
 obj = MES_IPQC_PINHOLE(report_date1, report_date2)
 obj.convert()

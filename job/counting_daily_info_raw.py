@@ -1,10 +1,9 @@
 import sys
 import os
-from lib.utils import Utils
-
 curPath = os.path.abspath(os.path.dirname(__file__))
 rootPath = os.path.split(curPath)[0]
 sys.path.append(rootPath)
+from lib.utils import Utils
 from database import mes_database, vnedc_database, mes_olap_database
 import pandas as pd
 from datetime import datetime, timedelta, date
@@ -34,8 +33,8 @@ class Output(object):
             self.sorting_data(year, month_week, start_date, end_date)
 
             # 以Runcard儲存IPQC結果
-            self.delete_ipqc_data(year, month_week)
-            self.ipqc_data(year, month_week, start_date, end_date)
+            # self.delete_ipqc_data(year, month_week)
+            # self.ipqc_data(year, month_week, start_date, end_date)
 
 
     def delete_data(self, year, month_week):
@@ -133,15 +132,15 @@ class Output(object):
                 SELECT
                     wo.Id AS WorkOrder, wo.PartNo, wo.ProductItem, wo.CustomerCode, wo.CustomerName,rc.InspectionDate AS WorkDate, rc.MachineName AS Machine, rc.LineName AS Line,
                     rc.Id as Runcard, rc.period AS Period,  std.{low_limit} AS LowSpeed, std.{up_limit} AS UpSpeed,
-                    CAST(ROUND((std.{low_limit} + std.{up_limit}) / 2, 1) AS FLOAT) AS StdSpeed,
+                    std.{up_limit} AS StdSpeed,
 					SUM(CASE WHEN op.ActualQty IS NOT NULL THEN op.ActualQty ELSE 0 END) AS OnlinePacking,
 					SUM(CASE WHEN wp.ActualQty IS NOT NULL THEN wp.ActualQty ELSE 0 END) AS WIPPacking,
                     SUM(CASE WHEN ft.ActualQty IS NOT NULL THEN ft.ActualQty ELSE 0 END) AS FaultyQuantity,
                     SUM(CASE WHEN sp.ActualQty IS NOT NULL THEN sp.ActualQty ELSE 0 END) AS ScrapQuantity,
 					MIN(wo.StartDate) AS WoStartDate, 
 					MAX(wo.EndDate) AS WoEndDate,
-					MAX(op.StandardAQL) StandardAQL,
-					MAX(op.InspectedAQL) InspectedAQL
+					MAX(ISNULL(op.StandardAQL, wp.StandardAQL)) StandardAQL,
+					MAX(ISNULL(op.InspectedAQL, wp.InspectedAQL)) InspectedAQL
                 FROM [PMGMES].[dbo].[PMG_MES_RunCard] rc
                 JOIN [PMGMES].[dbo].[PMG_MES_WorkOrder] wo
                     ON wo.id = rc.WorkOrderId AND wo.StartDate IS NOT NULL
@@ -176,10 +175,24 @@ class Output(object):
             fix_raws = mes_olap_db.select_sql_dict(fix_sql)
             fix_df = pd.DataFrame(fix_raws)
 
+            pitch_sql = f"""
+            SELECT Name Machine, 
+            CAST(ISNULL(attr1.AttrValue, 1) AS INT) AS std_val, 
+            CAST(attr2.AttrValue AS INT) AS act_val, 
+            ISNULL(CAST(CAST(attr2.AttrValue AS FLOAT) / CAST(ISNULL(attr1.AttrValue, 1) AS FLOAT) AS FLOAT), 1) AS pitch_rate
+			  FROM [PMGMES].[dbo].[PMG_DML_DataModelList] dl
+			  LEFT JOIN [PMGMES].[dbo].[PMG_DML_DataModelAttrList] attr1 on dl.Id = attr1.DataModelListId and attr1.AttrName = 'StandardPitch'
+			  LEFT JOIN [PMGMES].[dbo].[PMG_DML_DataModelAttrList] attr2 on dl.Id = attr2.DataModelListId and attr2.AttrName = 'ActualPitch'
+			  WHERE DataModelTypeId = 'DMT000003' and Name = '{mach}'
+            """
+            print(pitch_sql)
+            pitch_raws = mes_db.select_sql_dict(pitch_sql)
+            pitch_df = pd.DataFrame(pitch_raws)
+
+
             if not counting_df.empty and not wo_info_df.empty:
                 data_df = pd.merge(counting_df, wo_info_df, on=['WorkDate', 'Machine', 'Line', 'Period'], how='left')
-                fix_df['Period'] = fix_df['Period'].astype(str)
-                data_df = pd.merge(data_df, fix_df, on=['WorkDate', 'Machine', 'Line', 'Period'], how='left')
+                data_df = pd.merge(data_df, pitch_df, on=['Machine'], how='left')
 
                 # 點數機會有模擬測試的情況，有RunCard才算點數機數量
                 data_df["MaxSpeed"] = pd.to_numeric(data_df["MaxSpeed"], errors="coerce")
@@ -187,7 +200,10 @@ class Output(object):
                 data_df.loc[data_df["WorkOrder"].isna() | (data_df["WorkOrder"] == "") | (data_df["MaxSpeed"] < 100), "Stop_time"] = 60
 
                 data_df["Run_time"] = 60 - data_df["Stop_time"]
-                data_df["Target"] = data_df["Run_time"] * data_df["StdSpeed"]
+                data_df["Run_time"] = data_df["Run_time"].astype(float)
+                data_df["StdSpeed"] = data_df["StdSpeed"].astype(float)
+                data_df["pitch_rate"] = data_df["pitch_rate"].astype(float)
+                data_df["Target"] = (data_df["Run_time"] * data_df["StdSpeed"] / data_df["pitch_rate"]).astype(int)
                 data_df['WorkOrder'] = data_df['WorkOrder'].fillna('').astype(str)
                 data_df['WoStartDate'] = data_df['WoStartDate'].fillna('').astype(str)
                 data_df['WoEndDate'] = data_df['WoEndDate'].fillna('').astype(str)
@@ -212,10 +228,13 @@ class Output(object):
                 data_df['Shift'] = data_df['Period'].apply(self.shift)
 
                 # 點數機資料修正
-                data_df.loc[
-                    data_df["fix_CountingQty"].notna(), ["MinSpeed", "MaxSpeed", "AvgSpeed", "Quantity", "Target", "Stop_time", "Run_time"]] = \
-                    data_df.loc[data_df["fix_CountingQty"].notna(), ["fix_MinSpeed", "fix_MaxSpeed", "fix_AvgSpeed",
-                                                                     "fix_CountingQty", "fix_Target", "fix_StopTime", "fix_RunTime"]].values
+                if not fix_df.empty:
+                    fix_df['Period'] = fix_df['Period'].astype(str)
+                    data_df = pd.merge(data_df, fix_df, on=['WorkDate', 'Machine', 'Line', 'Period'], how='left')
+                    data_df.loc[
+                        data_df["fix_CountingQty"].notna(), ["MinSpeed", "MaxSpeed", "AvgSpeed", "Quantity", "Target", "Stop_time", "Run_time"]] = \
+                        data_df.loc[data_df["fix_CountingQty"].notna(), ["fix_MinSpeed", "fix_MaxSpeed", "fix_AvgSpeed",
+                                                                         "fix_CountingQty", "fix_Target", "fix_StopTime", "fix_RunTime"]].values
 
                 for _, row in data_df.iterrows():
                     try:
