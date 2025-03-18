@@ -7,7 +7,7 @@ from lib.utils import Utils
 from database import mes_database, vnedc_database, mes_olap_database
 import pandas as pd
 from datetime import datetime, timedelta, date
-
+import numpy as np
 
 class Output(object):
     week_range = 15
@@ -33,8 +33,8 @@ class Output(object):
             self.sorting_data(year, month_week, start_date, end_date)
 
             # 以Runcard儲存IPQC結果
-            # self.delete_ipqc_data(year, month_week)
-            # self.ipqc_data(year, month_week, start_date, end_date)
+            self.delete_ipqc_data(year, month_week)
+            self.ipqc_data(year, month_week, start_date, end_date)
 
 
     def delete_data(self, year, month_week):
@@ -203,7 +203,13 @@ class Output(object):
                 data_df["Run_time"] = data_df["Run_time"].astype(float)
                 data_df["StdSpeed"] = data_df["StdSpeed"].astype(float)
                 data_df["pitch_rate"] = data_df["pitch_rate"].astype(float)
-                data_df["Target"] = (data_df["Run_time"] * data_df["StdSpeed"] / data_df["pitch_rate"]).astype(int)
+
+                data_df["Target"] = (
+                        data_df["Run_time"].fillna(0) *
+                        data_df["StdSpeed"].fillna(0) /
+                        data_df["pitch_rate"].replace(0, np.nan).fillna(1)  # 避免除 0
+                ).replace([np.inf, -np.inf], np.nan).fillna(0).astype(int)
+
                 data_df['WorkOrder'] = data_df['WorkOrder'].fillna('').astype(str)
                 data_df['WoStartDate'] = data_df['WoStartDate'].fillna('').astype(str)
                 data_df['WoEndDate'] = data_df['WoEndDate'].fillna('').astype(str)
