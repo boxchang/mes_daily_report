@@ -173,35 +173,35 @@ class mes_weekly_report(object):
         filemode='w'  # 写入模式，'w' 表示每次运行程序时会覆盖日志文件
     )
 
+    def get_week_date_df_fix(self):
+        vnedc_db = vnedc_database()
+
+        sql = f"""
+            SELECT *
+            FROM [MES_OLAP].[dbo].[week_date] 
+            where  [year] = 2025 and [month] =3 and month_week = 'W1'
+             and enable = 1
+        """
+
+        print(sql)
+        raws = vnedc_db.select_sql_dict(sql)
+
+        return raws[0]
+
     def __init__(self, mode):
         self.db = vnedc_database()
         self.mes_db = mes_database()
         today = datetime.now().date()
         self.mode = mode
 
-        if mode == "MONTHLY":
-            this_start_date = today.replace(day=1)
-
-            last_end_date = this_start_date - timedelta(days=1)
-            self.last_end_date = last_end_date
-            last_start_date = last_end_date.replace(day=1)
-            self.last_start_date = last_start_date
-
-            this_end_date = this_start_date - timedelta(days=1)
-            self.this_end_date = this_end_date
-            this_start_date = last_end_date.replace(day=1)
-            self.this_start_date = this_start_date
-
-            fold_name = this_start_date.strftime('%Y%m').zfill(2)
-            save_path = os.path.join("monthly_output", fold_name)
-        elif mode == "WEEKLY":
-            week_date = Utils().get_week_date_dist()
-            self.this_end_date = week_date['end_date']
-            self.this_start_date = week_date['start_date']
-            self.year = week_date['year']
-            self.month_week = str(week_date['month']) + week_date['month_week']
-            fold_name = str(week_date['year']) + str(week_date['month']).zfill(2) + week_date['month_week']
-            save_path = os.path.join("weekly_output", fold_name)
+        week_date = Utils().get_week_date_dist()
+        #week_date = self.get_week_date_df_fix()
+        self.this_end_date = week_date['end_date']
+        self.this_start_date = week_date['start_date']
+        self.year = week_date['year']
+        self.month_week = str(week_date['month']) + week_date['month_week']
+        fold_name = str(week_date['year']) + str(week_date['month']).zfill(2) + week_date['month_week']
+        save_path = os.path.join("weekly_output", fold_name)
 
         self.save_path = save_path
         # Check folder to create
@@ -236,6 +236,7 @@ class mes_weekly_report(object):
 
         df['Period'] = df['Period'].apply(lambda x: f"{int(x):02}:00")
         df["Weight_Value"] = df["Weight_Value"].apply(lambda x: f"{x:.2f}")
+        df.loc[df['Weight_Value'].isna() | (df['Weight_Value'] == 0), 'Weight_Value'] = ''
 
         # Rename columns
         df.rename(columns=self.header_columns, inplace=True)
@@ -253,8 +254,11 @@ class mes_weekly_report(object):
         header_row = 0
         data_start_row = 1
 
+        df_copy = df.copy()
+        df_copy = df_copy.fillna("")
+
         # Write data to the Excel sheet
-        df.to_excel(writer, sheet_name=namesheet, index=False, startrow=header_row)
+        df_copy.to_excel(writer, sheet_name=namesheet, index=False, startrow=header_row)
 
         workbook = writer.book
         worksheet = writer.sheets.get(namesheet)
@@ -282,6 +286,9 @@ class mes_weekly_report(object):
                 if col_letter in [column_letter['MaxSpeed'], column_letter['MinSpeed'], column_letter['AvgSpeed'],
                                   column_letter['StdSpeed']]:
                     cell.alignment = self.right_align_style.alignment
+                elif col_letter in [column_letter['MaxSpeed'], column_letter['MinSpeed'], column_letter['AvgSpeed'],
+                                  column_letter['StdSpeed']]:
+                    cell.alignment = self.center_align_style.alignment
                 elif col_letter in [column_letter['CountingQty'], column_letter['OnlinePacking'], column_letter['Target'], column_letter['SeparateQty']]:
                     cell.number_format = '#,##0'
                     cell.alignment = self.right_align_style.alignment
@@ -309,7 +316,7 @@ class mes_weekly_report(object):
         try:
             img = Image(chart_img)
             img.height = 6 * 96
-            img.width = 15 * 96
+            img.width = 16 * 96
             img.anchor = 'A' + str(len(df) + 5)
             worksheet.add_image(img)
         except:
@@ -334,14 +341,15 @@ class mes_weekly_report(object):
                         Roll_Value,Roll_Limit,Roll_Status,Cuff_Value,Cuff_Limit,Cuff_Status,Palm_Value,Palm_Limit,Palm_Status,
                         Finger_Value,Finger_Limit,Finger_Status,FingerTip_Value,FingerTip_Limit,FingerTip_Status,
                         Length_Value,Length_Limit,Length_Status, Weight_Value, Weight_Limit, 
-                        CASE WHEN Weight_Defect = 'LL2' THEN 'NG' ELSE 'PASS' END AS Weight_Light, 
-                        CASE WHEN Weight_Defect = 'LL1' THEN 'NG' ELSE 'PASS' END AS Weight_Heavy,
+                        CASE WHEN Weight_Defect IS NULL THEN NULL WHEN Weight_Defect = 'LL2' THEN 'NG' ELSE 'PASS' END AS Weight_Light, 
+                        CASE WHEN Weight_Defect IS NULL THEN NULL WHEN Weight_Defect = 'LL1' THEN 'NG' ELSE 'PASS' END AS Weight_Heavy,
                         Width_Value,Width_Limit,Width_Status,
                         Pinhole_Value,Pinhole_Limit,Pinhole_Status
                         FROM [MES_OLAP].[dbo].[counting_daily_info_raw] c
                         LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on c.Runcard = ipqc.Runcard
                         where c.Year = {year} and c.MonthWeek = '{month_week}'  
                         and c.branch like'%{plant}%'
+                        and not (WorkOrder != '' and InspectedAQL ='')
                         --and StandardAQL is not Null and InspectedAQL is not null 
                         order by Machine, WorkDate, Cast(Period as Int), Line
                         """
@@ -350,10 +358,11 @@ class mes_weekly_report(object):
             df = pd.DataFrame(data)
 
             # 設定IPQC欄位判斷條件
-            df['IPQC'] = df[
-                ['Tensile_Status', 'Elongation_Status', 'Roll_Status', 'Cuff_Status', 'Palm_Status',
-                 'Finger_Status', 'FingerTip_Status', 'Length_Status', 'Weight_Heavy', 'Weight_Light', 'Width_Status',
-                 'Pinhole_Status']].apply(lambda row: 'NG' if 'NG' in row.values else 'PASS', axis=1)
+            df['IPQC'] = df.apply(lambda row: "" if pd.isna(row['WorkOrder']) or row['WorkOrder'] == ""
+            else ('NG' if 'NG' in row[['Tensile_Status', 'Elongation_Status', 'Roll_Status', 'Cuff_Status',
+                                       'Palm_Status', 'Finger_Status', 'FingerTip_Status', 'Length_Status',
+                                       'Weight_Heavy', 'Weight_Light', 'Width_Status', 'Pinhole_Status']].values
+                  else 'PASS'), axis=1)
             try:
                 df['SeparateQty'] = df.apply(
                     lambda row: row['OnlinePacking'] + row['WIPPacking'] if row['IPQC'] == 'NG'
@@ -376,12 +385,12 @@ class mes_weekly_report(object):
                 mach_sum_df = self.ipqc_ng_data(machine_df)
                 mach_sum_list.append(mach_sum_df)
             all_mach_sum_df = pd.concat(mach_sum_list)
-            # self.generate_ipqc_ng_data_excel(writer, all_mach_sum_df)
-            #
-            # self.delete_counting_weekly_info_raw(plant, year, month_week)
-            # self.insert_counting_weekly_info_raw(plant, year, month_week, summary_df)
-            #
-            # self.generate_12aspect_output_excel(writer, plant)
+            self.generate_ipqc_ng_data_excel(writer, all_mach_sum_df)
+
+            self.delete_counting_weekly_info_raw(plant, year, month_week)
+            self.insert_counting_weekly_info_raw(plant, year, month_week, summary_df)
+
+            self.generate_12aspect_output_excel(writer, plant)
             self.generate_12aspect_cosmetic_excel(writer, plant, year, month_week)
             self.generate_12aspect_cosmetic_summary_excel(writer, plant, year, month_week)
 
@@ -454,6 +463,7 @@ class mes_weekly_report(object):
 
         return df_grouped
 
+    # 外觀週累計
     def generate_12aspect_cosmetic_summary_excel(self, writer, plant, year, month_week):
         column_letter = {'Plant': 'A', 'Year': 'B', 'MonthWeek': 'C',
                          'total_6100': 'D', 'LL1_6100': 'E', 'LL1_6100_rate': 'F', 'LL2_6100': 'G', 'LL2_6100_rate': 'H',
@@ -469,7 +479,7 @@ class mes_weekly_report(object):
                          'total_6100': '美線總時數', 'LL1_6100': '美線超重時數', 'LL1_6100_rate': '美線超重比例', 'LL2_6100': '美線超輕時數', 'LL2_6100_rate': '美線超輕比例',
                          'total_6200': '歐線總時數', 'LL1_6200': '歐線超重時數', 'LL1_6200_rate': '歐線超重比例', 'LL2_6200': '歐線超輕時數', 'LL2_6200_rate': '歐線超輕比例',
                          'total_6300': '日線總時數', 'LL1_6300': '日線超重時數', 'LL1_6300_rate': '日線超重比例', 'LL2_6300': '日線超輕時數', 'LL2_6300_rate': '日線超輕比例',
-                         'total_7000': 'PMG總時數', 'LL1_7000': 'PMG超重時數', 'LL1_7000_rate': 'PMG超重比例', 'LL2_7000': 'PMG超輕時數', 'LL2_7000_rate': 'PMG超輕比例',
+                         'total_7000': 'OBM總時數', 'LL1_7000': 'OBM超重時數', 'LL1_7000_rate': 'OBM超重比例', 'LL2_7000': 'OBM超輕時數', 'LL2_7000_rate': 'OBM超輕比例',
                          'critical_qty': 'Critical數量', 'critical_rate': 'Critical比例', 'critical_dpm': 'Critical DPM',
                          'major_qty': 'Major數量', 'major_rate': 'Major比例', 'major_dpm': 'Major DPM',
                          'minor_qty': 'Minor數量', 'minor_rate': 'Minor比例', 'minor_dpm': 'Minor DPM',
@@ -478,7 +488,7 @@ class mes_weekly_report(object):
 
         # 外觀週累計
         cosmetic_summary_sql = f"""
-                    SELECT [Plant],[Year],[MonthWeek]
+                    SELECT [Plant],r.Year,r.MonthWeek
                           ,[total_6100],[LL1_6100],[LL1_6100_rate],[LL2_6100],[LL2_6100_rate]
                           ,[total_6200],[LL1_6200],[LL1_6200_rate],[LL2_6200],[LL2_6200_rate]
                           ,[total_6300],[LL1_6300],[LL1_6300_rate],[LL2_6300],[LL2_6300_rate]
@@ -488,7 +498,10 @@ class mes_weekly_report(object):
                           ,[minor_qty],[minor_rate],[minor_dpm]
                           ,[pinhole_qty],[pinhole_rate],[pinhole_dpm]
                           ,[cosmetic_check_qty]
-                      FROM [MES_OLAP].[dbo].[appearance_weekly_info_raw] where Plant = '{plant}'
+                      FROM [MES_OLAP].[dbo].[appearance_weekly_info_raw] r
+                      JOIN [MES_OLAP].[dbo].[week_date] w on r.Year = w.year and r.MonthWeek = Cast(month as varchar)+month_week
+                      where Plant = '{plant}' and w.enable = 1
+                      order by [MonthWeek]
                     """
         cosmetic_summary_data = self.db.select_sql_dict(cosmetic_summary_sql)
         df = pd.DataFrame(cosmetic_summary_data)
@@ -600,7 +613,7 @@ class mes_weekly_report(object):
             weight_df = weight_df.pivot(index="runcard", columns="defect_code", values="qty").reset_index()
             order = ["runcard", "6100LL1", "6100LL2", "6200LL1", "6200LL2", "6300LL1", "6300LL2", "7000LL1", "7000LL2"]
             weight_df = weight_df.reindex(columns=order, fill_value='')
-            weight_header = {'6100LL1': '美線過重', '6100LL2': '美線過輕', '6200LL1': '歐線過重', '6200LL2': '歐線過輕', '6300LL1': '日線過重', '6300LL2': '日線過輕', '7000LL1': 'PMG過重', '7000LL2': 'PMG過輕'}
+            weight_header = {'6100LL1': '美線過重', '6100LL2': '美線過輕', '6200LL1': '歐線過重', '6200LL2': '歐線過輕', '6300LL1': '日線過重', '6300LL2': '日線過輕', '7000LL1': 'OBM過重', '7000LL2': 'OBM過輕'}
 
             defect_sql = f"""
             SELECT [defect_code],
@@ -911,6 +924,7 @@ class mes_weekly_report(object):
           FROM [MES_OLAP].[dbo].[counting_weekly_info_raw] r
           JOIN [MES_OLAP].[dbo].[week_date] w on r.Year = w.year and r.MonthWeek = Cast(month as varchar)+month_week
           where Plant = '{plant}' and w.enable = 1
+          Order by [MonthWeek]
         """
         data = self.db.select_sql_dict(sql)
         df = pd.DataFrame(data)
@@ -965,13 +979,8 @@ class mes_weekly_report(object):
                         'AvgSpeed': 'L', 'Target': 'M', 'Capacity': 'N', 'Yield': 'O', 'Activation': 'P', 'OEE': 'Q', 'Achievement': 'R', 'SeparateRate': 'S'}
         summary_data = []
         tmp_date = self.date_mark.replace('_', '~')
-        mode = self.mode
-        this_start_date = self.this_start_date
 
-        if mode == 'WEEKLY':
-            tmp_week = f"{self.month_week} ({tmp_date})"
-        else:
-            tmp_week = f"{this_start_date.strftime('%Y %m')}({tmp_date})"
+        tmp_week = f"{self.month_week} ({tmp_date})"
 
         thin_border_top = Border(top=Side(style="thin"))
         thin_border_bottom = Border(bottom=Side(style="thin"))
@@ -1173,7 +1182,7 @@ class mes_weekly_report(object):
                     sum(case when cast(belong_to as date) between '{this_start_date}' and '{this_end_date}' then OnlinePacking else 0 end)) as this_unfinish
                     FROM [MES_OLAP].[dbo].[counting_daily_info_raw] c
                     JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on c.Runcard = ipqc.Runcard
-                    where Machine like '%{plant}%'
+                    where Machine like '%{plant}%' and not (WorkOrder != '' and InspectedAQL ='')
                     and Weight_Value > 0
                     group by Machine
                     order by Machine"""
@@ -1189,11 +1198,6 @@ class mes_weekly_report(object):
         max_data = max(this_data, default=0)
         step_data = 10
 
-        rounded_max_data = int(
-            (((max_data / (10 ** (len(str(max_data)) - 2))) // step_data) * step_data + step_data) * (
-                    10 ** (len(str(max_data)) - 2)))
-        rounded_step_data = step_data * (10 ** (len(str(max_data)) - 2))
-
         this_rate = [round((item['this_time'] / item['target_this_time']) * 100, 2) if int(
             item['target_this_time']) > 0 else 0 for item in data]
 
@@ -1204,102 +1208,70 @@ class mes_weekly_report(object):
         bar_width = 0.6
         plt.figure(figsize=(16, 9))
         fig, ax1 = plt.subplots(figsize=(16, 9))
-        if mode == "WEEKLY":
 
-            this_month_bars = ax1.bar([i for i in x_range], this_data, width=bar_width,
-                                      label=f"包裝確認量",
-                                      align='center', color='#10ba81')
-            unfinish_bars = ax1.bar([i for i in x_range], this_unfinish, width=bar_width, bottom=this_data,
-                                      label=f"週目標差異",
-                                      align='center', color='lightgreen')
-        if mode == "MONTHLY":
-
-            this_month_bars = ax1.bar([i for i in x_range], this_data, width=bar_width,
-                                      label=f"{this_start_date.strftime('%Y %m')}月產量", align='center', color='#10ba81')
-
-            unfinish_bars = ax1.bar([i for i in x_range], this_unfinish, width=bar_width, bottom=this_data,
-                                      label=f"{this_start_date.strftime('%Y %m')}月目標差異", align='center', color='lightgreen')
+        this_week_bars = ax1.bar([i for i in x_range], this_data, width=bar_width,
+                                  label=f"包裝確認量",
+                                  align='center', color='#10ba81')
+        unfinish_bars = ax1.bar([i for i in x_range], this_unfinish, width=bar_width, bottom=this_data,
+                                  label=f"週目標差異",
+                                  align='center', color='lightgreen')
 
         ax1.set_xticks(x_range)
         ax1.set_xticklabels(x_labels, rotation=0, ha="center", fontsize=12)
 
-        if len(str(max_data)) > 7:
-            yticks_positions = list(range(0, rounded_max_data + 1 * rounded_step_data, rounded_step_data))
-            yticks_positions.append(int(rounded_max_data + 2 * rounded_step_data))
-            yticks_labels = [f"{int(i//(10**(len(str(max_data)))))}" + '百萬' if len(str(i)) > 6 else f"{i}" for i
-                             in yticks_positions]
+        yticks_positions = []
+        if 'NBR' in plant:
+            yticks_positions = [1000000, 2000000, 3000000, 4000000, 5000000, 6000000, 7000000, 10000000]
+            yticks_labels = ['1百萬', '2百萬', '3百萬', '4百萬', '5百萬', '6百萬', '7百萬', '']
+        elif 'PVC' in plant:
+            yticks_positions = [1000000, 2000000, 3000000, 4000000, 5000000]
+            yticks_labels = ['1百萬', '2百萬', '3百萬', '4百萬', '']
 
-            for index, bar in enumerate(this_month_bars):
-                height = bar.get_height()
-                unfinish_height = unfinish_bars[index].get_height()
-                ax1.text(
-                    bar.get_x() + bar.get_width() / 2,
-                    height+unfinish_height,
-                    f'{round(height/(10**(len(str(max_data)) - 2)),2)}'[:4] if height > 0 else '',
-                    ha='center', va='bottom', fontsize=12  # Align the text
-                )
-        elif 4 < len(str(max_data)) <= 7:
-            yticks_positions = list(range(0, rounded_max_data + 1 * rounded_step_data, rounded_step_data))
-            yticks_positions.append(int(rounded_max_data + 4 * rounded_step_data))
-            yticks_labels = [f"{int(i//(10**(len(str(max_data)) - 1)))}" + '百萬' if len(str(i)) > 4 and int(
-                i // (10 ** (len(str(max_data))))) % 60 == 0 else "" for i in yticks_positions]
+        for index, bar in enumerate(this_week_bars):
+            height = bar.get_height()
+            unfinish_height = unfinish_bars[index].get_height()
 
-            for index, bar in enumerate(this_month_bars):
-                height = bar.get_height()
-                unfinish_height = unfinish_bars[index].get_height()
-                ax1.text(
-                    bar.get_x() + bar.get_width() / 2,
-                    height+unfinish_height,
-                    f'{round(height/(10**(len(str(max_data)) - 1)),2)}'[:4] if height > 0 else '',
-                    ha='center', va='bottom', fontsize=12  # Align the text
-                )
-        yticks_labels[-1] = ""
+            if len(str(max_data)) > 7:
+                show_text = f'{round(height/(10**(len(str(max_data)) - 2)),2)}'[:4] if height > 0 else ''
+            elif 4 < len(str(max_data)) <= 7:
+                show_text = f'{round(height/(10**(len(str(max_data)) - 1)),2)}'[:4] if height > 0 else ''
+
+            ax1.text(
+                bar.get_x() + bar.get_width() / 2,
+                height+unfinish_height,
+                show_text,
+                ha='center', va='bottom', fontsize=12  # Align the text
+            )
+
         ax1.set_yticks(yticks_positions)
         ax1.set_yticklabels(yticks_labels, fontsize=12)
 
         # Achievement Rate Line Chart (橘色的線)
         ax2 = ax1.twinx()
-        if mode == "WEEKLY":
-            # line_label = f"{this_start_date.strftime('%d/%m')}-{this_end_date.strftime('%d/%m')}"
-            sr_achieve_rate = "本週達成率"
-            filtered_data = [(x, rate) for x, rate in zip(x_range, this_rate) if rate != 0]  # 折線圖上的文字
-            x_filtered, this_rate_filtered = zip(*filtered_data)
-            this_rate_line = ax2.plot(x_filtered, this_rate_filtered,
-                                      label=sr_achieve_rate,
-                                      color='#ED7D31', marker='o', linewidth=1.5)
 
-        if mode == "MONTHLY":
-            # line_label = f"{this_start_date.strftime('%B %Y')}"
-            sr_achieve_rate = "本月達成率"
-            name = f"{this_start_date.strftime('%Y %m')}"
-            # name1 = f"{last_start_date.strftime('%B %Y')}"
-            # filtered_data = [(x, rate) for x, rate in zip(x_range, last_rate) if rate != 0]
-            # x_filtered, last_rate_filtered = zip(*filtered_data)
-            # last_rate_line = ax2.plot(x_filtered, last_rate_filtered, label=f"{last_start_date.strftime('%B %Y')}",
-            #                           color='#F8CBAD', marker='o', linewidth=1.5)
-            filtered_data = [(x, rate) for x, rate in zip(x_range, this_rate) if rate != 0]
-            x_filtered, this_rate_filtered = zip(*filtered_data)
-            this_rate_line = ax2.plot(x_filtered, this_rate_filtered,
-                                      label=sr_achieve_rate,
-                                      color='#ED7D31', marker='o', linewidth=1.5)
+        # line_label = f"{this_start_date.strftime('%d/%m')}-{this_end_date.strftime('%d/%m')}"
+        sr_achieve_rate = "本週達成率"
+        filtered_data = [(x, rate) for x, rate in zip(x_range, this_rate) if rate != 0]  # 折線圖上的文字
+        x_filtered, this_rate_filtered = zip(*filtered_data)
+        this_rate_line = ax2.plot(x_filtered, this_rate_filtered,
+                                  label=sr_achieve_rate,
+                                  color='#ED7D31', marker='o', linewidth=1.5)
 
         # Label Name
         sr_target = "達成率目標%"
         # Chart Label
         ry_label = "達成率(%)"
         ly_label = "Product (百萬)"
-        if self.mode == "WEEKLY":
-            name = self.date_mark
-            title = f"\n{plant} {self.year} {self.month_week} ({name})目標達成率\n"
-        else:
-            name = f"{this_start_date.strftime('%Y %m')}"
-            title = f"\n{plant} {name}月目標達成率\n"
+
+        name = self.date_mark
+        title = f"\n{plant} {self.year} {self.month_week} ({name})目標達成率\n"
 
         # Achievement Rate Standard Line
-        if plant == "NBR":
+        if "NBR" in plant :
             target_rate = 95
-        else:
+        elif "PVC" in plant:
             target_rate = 98
+
         yticks_positions = list(range(0, rounded_max_rate + 1 * rounded_step_rate, rounded_step_rate))
         if target_rate not in yticks_positions:
             yticks_positions.append(target_rate)
@@ -1311,22 +1283,10 @@ class mes_weekly_report(object):
         ax2.set_yticks(yticks_positions)
         ax2.set_yticklabels(yticks_labels, fontsize=12)
         ax2.axhline(y=target_rate, color='red', linestyle='--', linewidth=1, label=sr_target)
-        #ax2.axhline(y=95, color='red', linestyle='--', linewidth=1)
 
-        #ax1.set_xlabel(f'{plant} (line)', labelpad=10, fontsize=12)
         ax1.xaxis.set_label_coords(0.975, -0.014)
         ax1.set_ylabel('Product output', fontsize=12)
         ax2.set_ylabel('Archive rates', fontsize=12)
-
-        # Achievement Rate Label 線上的數字
-        # for i, value in enumerate(last_rate):
-        #     ax2.text(
-        #         x_range[i],
-        #         value + 1.5 if value > this_rate[i] else value - 3.5,
-        #         f"{value:.1f}" if value != 0 else '',
-        #         ha='center', va='bottom', fontsize=8, color='white',
-        #         bbox=dict(facecolor='#F8CBAD', edgecolor='none', boxstyle='round,pad=0.3')
-        #     )
 
         for i, value in enumerate(this_rate):
             ax2.text(
@@ -1384,12 +1344,6 @@ class mes_weekly_report(object):
         ax2.set_ylabel(ry_label, labelpad=20, rotation=0)
         ax2.yaxis.set_label_coords(1.01, 1.03)
 
-        # plt.text(
-        #     x_range[-1] / 2,
-        #     -rounded_max_rate * 0.125,
-        #     title,
-        #     fontsize=16, color='black', ha='center', va='center'
-        # )
         plt.title(title, fontsize=20)
 
         plt.tight_layout()
@@ -1601,11 +1555,7 @@ class mes_weekly_report(object):
         msg['From'] = f"{sender_alias} <{sender_email}>"
         msg['To'] = ', '.join(to_emails)
 
-        if mode == "WEEKLY":
-            msg['Subject'] = f'[GD Report] {self.year} {self.month_week}達成率報表 {date_mark}'
-        elif mode == "MONTHLY":
-            name = f"{this_start_date.strftime('%Y %m')}"
-            msg['Subject'] = f'[GD Report] {name}月達成率報表 {date_mark}'
+        msg['Subject'] = f'[GD Report] {self.year} {self.month_week}達成率報表 {date_mark}'
 
         # Mail Content
         html = """\
@@ -1791,7 +1741,7 @@ class mes_weekly_report(object):
                 bar_width = 0.6
                 plt.figure(figsize=(24, 9))
                 fig, ax1 = plt.subplots(figsize=(24, 9))
-                this_month_bars = ax1.bar([i for i in x_range], this_data, width=bar_width,
+                this_week_bars = ax1.bar([i for i in x_range], this_data, width=bar_width,
                                           label=f"包裝確認量週累計", align='center', color='#10ba81')
                 unfinish_bars = ax1.bar([i for i in x_range], unfinish_data, width=bar_width, bottom=this_data,
                                         label=f"週目標差異",
@@ -1799,26 +1749,20 @@ class mes_weekly_report(object):
                 ax1.set_xticks(x_range)
                 ax1.set_xticklabels(x_labels, rotation=0, ha="center", fontsize=12)
 
-                if len(str(max_data)) >= 7:
-                    for index, bar in enumerate(this_month_bars):
-                        height = bar.get_height()
-                        unfinish_height = unfinish_bars[index].get_height()
-                        ax1.text(
-                            bar.get_x() + bar.get_width() / 2,
-                            height + unfinish_height,
-                            f'{round(height/1000000, 1)}'[:4] if height > 0 else '',
-                            ha='center', va='bottom', fontsize=12  # Align the text
-                        )
-                elif 4 < len(str(max_data)) < 7:
-                    for index, bar in enumerate(this_month_bars):
-                        height = bar.get_height()
-                        unfinish_height = unfinish_bars[index].get_height()
-                        ax1.text(
-                            bar.get_x() + bar.get_width() / 2,
-                            height + unfinish_height,
-                            f'{round(height/10000, 1)}'[:4] if height > 0 else '',
-                            ha='center', va='bottom', fontsize=12  # Align the text
-                        )
+
+                for index, bar in enumerate(this_week_bars):
+                    height = bar.get_height()
+                    unfinish_height = unfinish_bars[index].get_height()
+                    if len(str(max_data)) >= 7:
+                        show_text = f'{round(height/1000000, 1)}'[:4] if height > 0 else ''
+                    elif 4 < len(str(max_data)) < 7:
+                        show_text = f'{round(height/10000, 1)}'[:4] if height > 0 else ''
+                    ax1.text(
+                        bar.get_x() + bar.get_width() / 2,
+                        height + unfinish_height,
+                        show_text,
+                        ha='center', va='bottom', fontsize=12  # Align the text
+                    )
 
                 yticks_labels[-1] = ""
                 ax1.set_yticks(yticks_positions)
@@ -1930,215 +1874,6 @@ class mes_weekly_report(object):
             except Exception as e:
                 print(f"{machine['name']}: {e}")
                 pass
-    def monthly_chart(self, plant):
-        save_path = self.save_path
-
-        data1 = self.mach_list
-
-        for machine in data1:
-            print(f"Machine {machine}")
-            try:
-                today = datetime.today()
-                month_date = []
-                this_data = []
-                this_rate = []
-                x_labels = []
-                unfinish_data = []
-
-                for i in range(12):
-                    end_date = (today - relativedelta(months=i)).replace(day=1) - timedelta(days=1)
-                    start_date = end_date.replace(day=1)
-                    month_date.append([start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'), start_date.strftime("%B %Y")])
-                    x_labels.append(start_date.strftime("%Y-%m"))
-                month_date.reverse()
-                x_labels.reverse()
-                for i, item in enumerate(month_date):
-                    print(f"Month {item[2]} - start {item[0]} - end - {item[1]}")
-                    sql = f"""
-                            SELECT name,qty, target, (case when target-qty > 0 then target-qty then 0 end) unfinish_qty FROM (
-                            SELECT name, sum(case when sum_qty > 0 then sum_qty else 0 end) as qty, sum(case when target > 0 then target else 0 end) as target
-                            FROM [MES_OLAP].[dbo].[mes_daily_report_raw] where Name = '{machine['name']}'
-                            and (belong_to between '{item[0]}' and '{item[1]}')
-                            group by name) A"""
-                    rows = vnedc_database().select_sql_dict(sql)
-                    if len(rows) == 0:
-                        this_data.append(0)
-                        this_rate.append(0)
-                        unfinish_data.append(0)
-                    else:
-                        this_data.append(rows[0]['qty'])
-                        unfinish_data.append(rows[0]['unfinish_qty'])
-                        try:
-                            rate = int((rows[0]['qty'] / rows[0]['target']) * 100) if rows[0]['target'] > 0 else 100
-                        except Exception as e:
-                            rate = 100
-                            print(f"{e} at {machine['name']} at {item[2]} start {item[0]} - end {item[1]}")
-                            pass
-                        this_rate.append(rate)
-
-                x_range = range(0, len(x_labels) * 2, 2)
-
-                max_data = max(this_data, default=0)
-                step_data = 5
-                rounded_max_data = int(
-                    (((max_data / (10 ** (len(str(max_data)) - 2))) // step_data) * step_data + step_data) * (
-                            10 ** (len(str(max_data)) - 2)))
-                rounded_step_data = step_data * (10 ** (len(str(max_data)) - 2))
-                max_rate = max(this_rate, default=0)
-                rounded_max_rate = (math.ceil(max_rate / 10) * 10)
-                rounded_step_rate = 20
-
-                bar_width = 0.6
-                plt.figure(figsize=(16, 9))
-                fig, ax1 = plt.subplots(figsize=(16, 9))
-                this_month_bars = ax1.bar([i for i in x_range], this_data, width=bar_width,
-                                          label=f"月產量", align='center', color='#10ba81')
-                unfinish_bars = ax1.bar([i for i in x_range], unfinish_data, width=bar_width, bottom=this_data,
-                                        label=f"月目標差異",
-                                        align='center', color='lightgreen')
-                ax1.set_xticks(x_range)
-                ax1.set_xticklabels(x_labels, rotation=0, ha="center", fontsize=12)
-                if len(str(max_data)) > 7:
-                    yticks_positions = list(range(0, rounded_max_data + 1 * rounded_step_data, rounded_step_data))
-                    yticks_positions.append(int(rounded_max_data + 2 * rounded_step_data))
-                    yticks_labels = [
-                        f"{int(i//(10**(len(str(max_data)) - 2)))}" + '百萬' if len(str(i)) > 6 else f"{i}" for i
-                        in yticks_positions]
-                    for index, bar in enumerate(this_month_bars):
-                        height = bar.get_height()
-                        unfinish_height = unfinish_bars[index].get_height()
-                        ax1.text(
-                            bar.get_x() + bar.get_width() / 2,
-                            height + unfinish_height,
-                            f'{round(height/(10**(len(str(max_data)) - 2)),2)}'[
-                            :4] if height > 0 else '',
-                            ha='center', va='bottom', fontsize=12  # Align the text
-                        )
-                elif 4 < len(str(max_data)) <= 7:
-                    yticks_positions = list(range(0, rounded_max_data, rounded_step_data))
-                    yticks_positions.append(int(rounded_max_data + 3 * rounded_step_data))
-                    # yticks_labels = [f"{int(i//(10**(len(str(max_data)) - 3)))}" + '萬 PCS' if len(str(i)) > 4 and int(
-                    #     i // (10 ** (len(str(max_data)) - 3))) % 60 == 0 else "" for i in yticks_positions]
-                    yticks_labels = [f"{int(i/1000000)} 百萬" if i > 0 else 0 for i in yticks_positions]
-                    for index, bar in enumerate(this_month_bars):
-                        height = bar.get_height()
-                        unfinish_height = unfinish_bars[index].get_height()
-                        ax1.text(
-                            bar.get_x() + bar.get_width() / 2,
-                            height + unfinish_height,
-                            f'{int(height/(10**(len(str(max_data)) - 3)))}'[:4] if height > 0 else '',
-                            ha='center', va='bottom', fontsize=12  # Align the text
-                        )
-
-                yticks_labels[-1] = ""
-                ax1.set_yticks(yticks_positions)
-                ax1.set_yticklabels(yticks_labels, fontsize=12)
-
-                ax2 = ax1.twinx()
-                sr_achieve_rate = "達成率"
-
-                filtered_data = [(x, rate) for x, rate in zip(x_range, this_rate) if rate != 0]
-                x_filtered, this_rate_filtered = zip(*filtered_data)
-                this_rate_line = ax2.plot(x_filtered, this_rate_filtered,
-                                          label=sr_achieve_rate,
-                                          color='#ED7D31', marker='o', linewidth=1.5)
-                sr_target = "達成率目標"
-
-                ry_label = "達成率(%)"
-                ly_label = "Product (百萬)"
-
-                name = f"各週產出量"
-                title = f"\n{plant} ({machine['name']})\n"
-
-                if plant == "NBR":
-                    target_rate = 95
-                else:
-                    target_rate = 98
-
-                yticks_positions = list(range(0, rounded_max_rate + 1 * rounded_step_rate, rounded_step_rate))
-                if target_rate not in yticks_positions:
-                    yticks_positions.append(target_rate)
-                yticks_positions.append(rounded_max_rate + 0.25 * rounded_step_rate)
-                yticks_positions = sorted(yticks_positions)
-
-                yticks_labels = [f"{i}" + '%' for i in yticks_positions]
-                yticks_labels[-1] = ""
-                ax2.set_yticks(yticks_positions)
-                ax2.set_yticklabels(yticks_labels)
-                ax2.axhline(y=target_rate, color='red', linestyle='--', linewidth=1, label=sr_target)
-
-                ax1.xaxis.set_label_coords(0.975, -0.014)
-                ax1.set_ylabel('Product output', fontsize=12)
-                ax2.set_ylabel('Archive rates', fontsize=12)
-
-                for i, value in enumerate(this_rate):
-                    ax2.text(
-                        x_range[i],
-                        value + 1.5,
-                        f"{value:.1f}%" if value != 0 else '',
-                        ha='center', va='bottom', fontsize=10, color='white',
-                        bbox=dict(facecolor='#ED7D31', edgecolor='none', boxstyle='round,pad=0.3')
-                    )
-
-                handles1, labels1 = ax1.get_legend_handles_labels()
-                handles2, labels2 = ax2.get_legend_handles_labels()
-                fig.legend(
-                    handles1 + handles2,
-                    labels1 + labels2,
-                    loc='center left',
-                    fontsize=10,
-                    title="Note",
-                    title_fontsize=12,
-                    bbox_to_anchor=(1.0, 0.5),
-                    ncol=1
-                )
-
-                # Customize axes and borders
-                ax = plt.gca()  # Get current axes
-                ax.spines['top'].set_color('white')
-                ax.spines['top'].set_linewidth(1.5)
-
-                ax1.tick_params(axis='y', colors='black')  # Y-axis ticks color
-                y_tick_lines = ax1.get_yticklines()
-                y_tick_lines[-2].set_visible(False)
-                y_tick_lines[-1].set_visible(False)
-                ax1.annotate(
-                    '',
-                    xy=(0, 1.0),
-                    xytext=(0, 0.98),
-                    xycoords='axes fraction',
-                    arrowprops=dict(facecolor='black', arrowstyle='-|>,widthA=0.4,widthB=1.4', linewidth=0.5)
-                )
-                ax1.set_ylabel(ly_label, labelpad=20, rotation=0)
-                ax1.yaxis.set_label_coords(-0.01, 1.01)
-
-                ax2.tick_params(axis='y', colors='black')
-                y_tick_lines = ax2.get_yticklines()
-                y_tick_lines[-2].set_visible(False)
-                y_tick_lines[-1].set_visible(False)
-                ax2.annotate(
-                    '',
-                    xy=(1, 1.0),
-                    xytext=(1, 0.98),
-                    xycoords='axes fraction',
-                    arrowprops=dict(facecolor='black', arrowstyle='-|>,widthA=0.4,widthB=1.4', linewidth=0.5)
-                )
-
-                ax2.set_ylabel(ry_label, labelpad=20, rotation=0)
-                ax2.yaxis.set_label_coords(1.01, 1.03)
-
-                plt.title(title, fontsize=20)
-
-                plt.tight_layout()
-
-                file_name = f"MES_{machine['name']}_Chart.png"
-                # save_path = os.path.join("yearly_output")
-                chart_img = os.path.join(save_path, file_name)
-
-                plt.savefig(f"{chart_img}", dpi=100, bbox_inches="tight", pad_inches=0.45)
-                plt.close('all')
-            except:
-                pass
 
     def get_mach_list(self, plant):
         if plant == 'NBR':
@@ -2158,12 +1893,10 @@ class mes_weekly_report(object):
     def main(self):
         for plant in self.plant_name:
             self.mach_list = self.get_mach_list(plant)
-            # self.generate_chart(plant)
-            # if self.mode == 'WEEKLY':
-            #      self.weekly_chart(plant)
-            # # if self.mode == 'MONTHLY':
-            # #     self.monthly_chart(plant)
-            # self.rate_chart(plant)
+            self.generate_chart(plant)
+            if self.mode == 'WEEKLY':
+                 self.weekly_chart(plant)
+            self.rate_chart(plant)
             self.generate_raw_excel(plant)
 
         self.send_email(self.file_list, self.image_buffers)
@@ -2212,13 +1945,7 @@ class mes_weekly_report(object):
 import argparse
 from datetime import datetime, timedelta, date
 
-parser = argparse.ArgumentParser(description="解析外部参数")
-parser.add_argument("--mode", choices=['WEEKLY', 'MONTHLY'], help="MONTHLY OR WEEKLY")
-args = parser.parse_args()
-mode = args.mode
-
-if not mode:
-    mode = "WEEKLY"
+mode = "WEEKLY"
 
 report = mes_weekly_report(mode)
 report.main()

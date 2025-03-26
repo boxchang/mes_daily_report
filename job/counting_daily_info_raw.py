@@ -18,6 +18,22 @@ class Output(object):
     def __init__(self, plant):
         self.plant = plant
 
+    def get_week_date_df_fix(self):
+        vnedc_db = vnedc_database()
+
+        sql = f"""
+            SELECT *
+            FROM [MES_OLAP].[dbo].[week_date] 
+            where  [year] = 2025 and [month] =3 and month_week = 'W1'
+             and enable = 1
+        """
+
+        print(sql)
+        raws = vnedc_db.select_sql_dict(sql)
+        df = pd.DataFrame(raws)
+
+        return df
+
 
     def execute(self):
         week_date = Utils().get_week_date_df()

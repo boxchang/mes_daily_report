@@ -109,7 +109,7 @@ class mes_daily_report(object):
 
         return smtp_config, to_emails, admin_emails
 
-    def send_email(self, file_list, image_buffers, data_date, error_msg):
+    def send_email(self, file_list, image_buffers, data_date, error_msg, normal_msg=None):
         logging.info(f"Start to send Email")
         smtp_config, to_emails, admin_emails = self.read_config('mes_daily_report_mail.config')
 
@@ -127,9 +127,10 @@ class mes_daily_report(object):
         msg['Subject'] = f'[GD Report] 產量日報表 {data_date}'
 
         # Mail Content
-        html = """\
+        html = f"""\
                 <html>
                   <body>
+                  {normal_msg}
                 """
         for i in range(len(image_buffers)):
             html += f'<img src="cid:chart_image{i}"><br>'
@@ -179,7 +180,7 @@ class mes_daily_report(object):
         finally:
             attachment.close()
 
-    def send_admin_email(self, file_list, image_buffers, data_date, error_msg):
+    def send_admin_email(self, file_list, image_buffers, data_date, error_msg, normal_msg=None):
         logging.info(f"Start to send Email")
         smtp_config, to_emails, admin_emails = self.read_config('mes_daily_report_mail.config')
 
@@ -291,7 +292,7 @@ class mes_daily_report(object):
 
         file_list = []
         error_list = []
-        error_msg = ""
+        msg_list = []
 
         # Email Attachment
         image_buffers = []
@@ -341,24 +342,6 @@ class mes_daily_report(object):
 
                 df_with_subtotals, df_chart, df_activation = self.sorting_data(db, df_selected)
 
-                # 生產時間不可能超過24小時，防呆檢查
-                numeric_production_time = df_with_subtotals['生產時間'].str.rstrip('H').astype(float)
-                has_greater_than_24 = (numeric_production_time > 24).any()
-                if has_greater_than_24:
-                    is_greater_than_24 = True
-                    error_list.append(f"{plant}發生總時數超過24，可能IPQC有用錯RunCard的情況")
-
-                # 判斷是否有用其他方式收貨，要去詢問產線異常原因
-                abnormal_machine = ""
-                for _, row in df_final.iterrows():
-                    if not pd.isna(row['sum_qty']) and not pd.isna(row['Ticket_Qty']):
-                        if int(row['sum_qty']) < 100 and int(row['Ticket_Qty']) > 1000:
-                            special_output = True
-                            abnormal_machine = row['Name']
-                            break
-                if special_output:
-                    error_list.append(f"{abnormal_machine} 點數機資料與SAP入庫資料差異過大，可能發生用舊點數機的情況")
-
                 with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
                     self.generate_summary_excel(writer, df_with_subtotals)
 
@@ -368,8 +351,19 @@ class mes_daily_report(object):
                         if not machine_df['ProductItem'].iloc[0]:
                             continue
 
-                        machine_df = machine_df.sort_values(by=['Date', 'Shift', 'Period'])
-                        self.generate_excel(writer, machine_df, plant, machine_name)
+                        machine_clean_df = machine_df.sort_values(by=['Date', 'Shift', 'Period'])
+                        self.generate_excel(writer, machine_clean_df, plant, machine_name)
+
+                        # 因同時生產兩種尺寸的工單，使用舊點數機人工作業分類，故無法取得正確資料進行計算
+                        printed_machines = set()
+                        check_df = machine_df.groupby(['Name', 'Line', 'Date', 'Shift', 'Period'])[
+                            'ProductItem'].nunique().reset_index()
+                        conflict_rows = check_df[check_df['ProductItem'] > 1]
+                        for _, row in conflict_rows.iterrows():
+                            key = (row['Name'], row['Line'])
+                            if key not in printed_machines:
+                                msg_list.append(f"{row['Name']} {row['Line']} 邊因同時生產兩種尺寸的工單，使用舊點數機人工作業分類，故無法取得正確資料進行計算。")
+                                printed_machines.add(key)
                     # 稼動率Raw Data
                     self.generate_activation_excel(writer, df_activation)
 
@@ -379,13 +373,34 @@ class mes_daily_report(object):
                 image_buffer = self.generate_chart(save_path, plant, report_date1, df_chart)
                 image_buffers.append(image_buffer)
 
+                # 生產時間不可能超過24小時，防呆檢查
+                numeric_production_time = df_with_subtotals['生產時間'].str.rstrip('H').astype(float)
+                machines_exceeding_24 = df_with_subtotals.loc[numeric_production_time > 24, '機台號'].unique()
+                if machines_exceeding_24.size > 0:
+                    for machine in machines_exceeding_24:
+                        for normal_msg in msg_list:
+                            if machine in normal_msg:
+                                break
+                            else:
+                                error_list.append(f"{machine}發生總時數超過24，可能IPQC有用錯RunCard的情況")
+
+                # 判斷是否有用其他方式收貨，要去詢問產線異常原因
+                for _, row in df_final.iterrows():
+                    if not pd.isna(row['sum_qty']) and not pd.isna(row['Ticket_Qty']):
+                        if int(row['sum_qty']) < 100 and int(row['Ticket_Qty']) > 1000:
+                            abnormal_machine = row['Name']
+                            # 判斷正常情況不歸屬點數機異常
+                            for normal_msg in msg_list:
+                                if abnormal_machine in normal_msg:
+                                    break
+                                else:
+                                    error_list.append(f"{abnormal_machine} 點數機資料與SAP入庫資料差異過大，可能發生用舊點數機的情況")
+
                 if isNoStandard:
                     error_list.append(f"有品項尚未維護標準值，無法計算目標產量")
 
                 logging.info(f"{plant} save raw data")
 
-                self.delete_mes_olap(report_date1, report_date2, plant)
-                self.insert_mes_olap(df_selected)
             except Exception as e:
                 logging.info(f"{e}")
 
@@ -395,8 +410,14 @@ class mes_daily_report(object):
         isCountingErrorResult, error_device = self.isCountingError(report_date1, report_date2)
         if isCountingErrorResult:
             for device in error_device:
-                error_list.append(f"{device}點數機資料異常")
+                # 判斷正常情況不歸屬點數機異常
+                for normal_msg in msg_list:
+                    if device in normal_msg:
+                        break
+                    else:
+                        error_list.append(f"{device}點數機資料異常")
         error_msg = '<br>'.join(error_list)
+        normal_msg = '<br>'.join(msg_list)
 
         if len(error_list) > 0:
             if not fix_mode:
@@ -410,7 +431,7 @@ class mes_daily_report(object):
                 reSent = 0
                 while reSent < max_reSend:
                     try:
-                        self.send_email(file_list, image_buffers, report_date1, error_msg)
+                        self.send_email(file_list, image_buffers, report_date1, error_msg, normal_msg=normal_msg)
                         print('Email sent successfully')
                         logging.info(f"Email sent successfully")
                         break
@@ -573,6 +594,16 @@ class mes_daily_report(object):
                     AND ipqc.OptionName = 'Weight'
                     AND dl.Name LIKE '%{plant}%' AND COUNTING_MACHINE LIKE '%CountingMachine%'
             ),
+            Pitch AS (
+				SELECT Name, 
+				CAST(ISNULL(attr1.AttrValue, 1) AS FLOAT) AS std_val, 
+				CAST(attr2.AttrValue AS FLOAT) AS act_val, 
+				ISNULL(CAST(CAST(attr2.AttrValue AS FLOAT) / CAST(ISNULL(attr1.AttrValue, 1) AS FLOAT) AS FLOAT), 1) AS pitch_rate
+				  FROM [PMGMES].[dbo].[PMG_DML_DataModelList] dl
+				  LEFT JOIN [PMGMES].[dbo].[PMG_DML_DataModelAttrList] attr1 on dl.Id = attr1.DataModelListId and attr1.AttrName = 'StandardPitch'
+				  LEFT JOIN [PMGMES].[dbo].[PMG_DML_DataModelAttrList] attr2 on dl.Id = attr2.DataModelListId and attr2.AttrName = 'ActualPitch'
+				  WHERE DataModelTypeId = 'DMT000003'
+			),
             CountingData AS (
                 SELECT 
                     m.mes_machine,
@@ -657,7 +688,7 @@ class mes_daily_report(object):
                 hole_result Separate,
                 ISNULL(s.ActualQty, 0) Scrap,
                 ISNULL(f.ActualQty, 0) SecondGrade,
-                CAST(60 * wo.LineSpeedStd AS INT) AS Target,
+                CAST(60 * wo.LineSpeedStd/pitch_rate AS INT) AS Target,
                 weight_result OverControl,
                 CAST(round(weight_value,2) AS DECIMAL(10, 2)) WeightValue,
                 OpticalNGRate,
@@ -678,6 +709,7 @@ class mes_daily_report(object):
                 LEFT JOIN Scrap s ON wo.runcard = s.runcardId
                 LEFT JOIN WorkInProcess t on wo.runcard = t.RunCardId
                 LEFT JOIN GoodStock gs on wo.runcard = gs.RunCardId
+                LEFT JOIN Pitch pc on pc.Name = wo.Name
                 WHERE NOT (wo.WorkOrderId IS NOT NULL AND t.ActualQty IS NULL) --有小票才列入計算，主要是User會用錯RunCard，以有小票為主進行統計
             ORDER BY 
                 mach.Name, 
@@ -1292,7 +1324,7 @@ class mes_daily_report(object):
         ax1.set_ylabel('日產量')
         # 設置 Y 軸的上限為 120 萬
         if plant == "PVC":
-            ax1.set_ylim(0, 600000)
+            ax1.set_ylim(0, 800000)
         else:
             ax1.set_ylim(0, 1200000)
 
@@ -1302,14 +1334,20 @@ class mes_daily_report(object):
 
         ax1.yaxis.set_major_formatter(FuncFormatter(y_formatter))
 
+        achieve_rate = 95 if plant == "NBR" else 98
+
         # 在每個長條圖上方顯示達成率百分比
         for bar, unfinished, rate in zip(bars, df_chart['Unfinished'], df_chart['Achievement Rate']):
             if pd.notnull(rate):  # 僅顯示達成率不為 None 的數值
                 height = bar.get_height() + unfinished  # 計算長條的總高度
-                ax1.text(bar.get_x() + bar.get_width() / 2, height + 20000, f'{rate:.1f}%', ha='center', va='bottom',
-                         fontsize=10)
+                if rate < achieve_rate:
+                    ax1.text(bar.get_x() + bar.get_width() / 2, height + 20000, f'{rate:.1f}%', ha='center', va='bottom',
+                             fontsize=10, color='red',
+                             bbox=dict(boxstyle="circle", edgecolor='red', facecolor='none', linewidth=1.5))
 
-        achieve_rate = 95 if plant == "NBR" else 98
+                else:
+                    ax1.text(bar.get_x() + bar.get_width() / 2, height + 20000, f'{rate:.1f}%', ha='center', va='bottom',
+                             fontsize=10)
 
         plt.title(f'{plant} {report_date} 日產量與日目標達成率 (達成率目標 > {achieve_rate}%)')
 
@@ -1381,8 +1419,8 @@ else:
     report_date2 = datetime.today()
     report_date2 = report_date2.strftime('%Y%m%d')
 
-    # report_date1 = "20250222"
-    # report_date2 = "20250223"
+    # report_date1 = "20250324"
+    # report_date2 = "20250325"
 
     report = mes_daily_report(report_date1, report_date2)
     report.main(fix_mode)
