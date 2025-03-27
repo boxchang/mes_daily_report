@@ -58,16 +58,15 @@ class Utils(object):
                     SELECT TOP ({weeks_to_generate}) *
                       FROM [MES_OLAP].[dbo].[week_date]
                       WHERE start_date < '{data_date}' AND enable = 1
-                      ORDER BY [year] desc, month desc, month_week desc
+                      ORDER BY [year] desc, month desc, week_no desc
                 """
         raws = vnedc_db.select_sql_dict(sql)
 
         for data in raws:
-            week = data['month_week']
+            week = data['week_no']
             week_start = data['start_date']
             week_end = data['end_date']
-            month = data['month']
-            weeks_list.append(f"{month}{week}")
+            weeks_list.append(f"{week}")
             week_dates.append([datetime.strptime(week_start, "%Y-%m-%d").date(), datetime.strptime(week_end, "%Y-%m-%d").date()])
 
         weeks_list.reverse()

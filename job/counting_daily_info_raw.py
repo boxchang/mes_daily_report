@@ -24,7 +24,7 @@ class Output(object):
         sql = f"""
             SELECT *
             FROM [MES_OLAP].[dbo].[week_date] 
-            where  [year] = 2025 and [month] =3 and month_week = 'W1'
+            where  [year] = 2025 and week_no = '1'
              and enable = 1
         """
 
@@ -40,25 +40,26 @@ class Output(object):
         #week_date = self.get_week_date_df_fix()
         for index, row in week_date.iterrows():
             year = row['year']
-            month_week = str(row['month']) + row['month_week']
+            week_no = row['week_no']
             start_date = row['start_date']
             end_date = row['end_date']
 
             # 以點數機資料為主串工單資訊
-            self.delete_data(year, month_week)
-            self.sorting_data(year, month_week, start_date, end_date)
+            self.delete_data(year, week_no)
+            self.sorting_data(year, week_no, start_date, end_date)
 
             # 以Runcard儲存IPQC結果
-            self.delete_ipqc_data(year, month_week)
-            self.ipqc_data(year, month_week, start_date, end_date)
+            self.delete_ipqc_data(year, week_no)
+            self.ipqc_data(year, week_no, start_date, end_date)
 
 
-    def delete_data(self, year, month_week):
+    def delete_data(self, year, week_no):
         mes_olap_db = mes_olap_database()
         sql = f"""
         DELETE FROM counting_daily_info_raw WHERE [Year] = {year}
-        AND MonthWeek = '{month_week}' AND branch = '{self.plant}'
+        AND Week_No = '{week_no}' AND branch = '{self.plant}'
         """
+        print(sql)
         mes_olap_db.execute_sql(sql)
 
     def shift(self, period):
@@ -70,7 +71,7 @@ class Output(object):
         except Exception as ex:
             return ''
 
-    def sorting_data(self, year, month_week, start_date, end_date):
+    def sorting_data(self, year, week_no, start_date, end_date):
         vnedc_db = vnedc_database()
         mes_db = mes_database()
         mes_olap_db = mes_olap_database()
@@ -298,11 +299,11 @@ class Output(object):
                                 belong_to = work_date
 
                         insert_sql = f"""
-                        Insert into counting_daily_info_raw ([Year], MonthWeek, WorkOrder, WoStartDate, WoEndDate, PartNo, ProductItem, WorkDate, 
+                        Insert into counting_daily_info_raw ([Year], Week_No, WorkOrder, WoStartDate, WoEndDate, PartNo, ProductItem, WorkDate, 
                         Machine, Line, Shift, Runcard, Period, LowSpeed, UpSpeed, StdSpeed, MinSpeed, MaxSpeed, AvgSpeed,RunTime, StopTime, CountingQty, OnlinePacking, WIPPacking, Target, FaultyQuantity, ScrapQuantity, 
                         StandardAQL, InspectedAQL,
                         create_at, plant, branch, belong_to, CustomerCode, CustomerName)
-                        Values({year}, '{month_week}', '{work_order}','{wo_start_date}','{wo_end_date}','{part_no}','{product_item}','{work_date}',
+                        Values({year}, '{week_no}', '{work_order}','{wo_start_date}','{wo_end_date}','{part_no}','{product_item}','{work_date}',
                         '{machine}','{line}', N'{shift}','{runcard}',{period},{low_speed},{up_speed},{std_speed}, 
                         {min_speed},{max_speed},{avg_speed},{run_time}, {stop_time},
                         {counting_qty},{online_packing_qty},{wip_packing_qty},{target},{faulty_qty},{scrap_qty},
@@ -314,15 +315,15 @@ class Output(object):
                     except Exception as e:
                         print(e)
 
-    def delete_ipqc_data(self, year, month_week):
+    def delete_ipqc_data(self, year, week_no):
         mes_olap_db = mes_olap_database()
         sql = f"""
                 DELETE FROM [MES_OLAP].[dbo].[mes_ipqc_data] WHERE [Year] = {year}
-                AND MonthWeek = '{month_week}'
+                AND Week_No = '{week_no}'
                 """
         mes_olap_db.execute_sql(sql)
 
-    def ipqc_data(self, year, month_week, start_date, end_date):
+    def ipqc_data(self, year, week_no, start_date, end_date):
         mes_db = mes_database()
         mes_olap_db = mes_olap_database()
 
@@ -340,7 +341,7 @@ class Output(object):
 
         sql = f"""
             SELECT Runcard FROM [MES_OLAP].[dbo].[counting_daily_info_raw]
-            WHERE [Year] = {year} AND MonthWeek = '{month_week}' AND Runcard <> ''           
+            WHERE [Year] = {year} AND Week_No = '{week_no}' AND Runcard <> ''           
         """
         counting_rows = mes_olap_db.select_sql_dict(sql)
         counting_df = pd.DataFrame(counting_rows)
@@ -432,7 +433,7 @@ class Output(object):
             cosmetic_status = ''
 
             sql = f"""
-                        Insert into [MES_OLAP].[dbo].[mes_ipqc_data]([Year],MonthWeek,Runcard,
+                        Insert into [MES_OLAP].[dbo].[mes_ipqc_data]([Year],Week_No,Runcard,
                         Tensile_Value,Tensile_Limit,Tensile_Status,Tensile_Defect,
                         Elongation_Value,Elongation_Limit,Elongation_Status,Elongation_Defect,
                         Roll_Value,Roll_Limit,Roll_Status,Roll_Defect,
@@ -445,7 +446,7 @@ class Output(object):
                         Width_Value,Width_Limit,Width_Status,Width_Defect,
                         Pinhole_Value,Pinhole_Limit,Pinhole_Status,Pinhole_Defect, 
                         create_at)
-                        Values({year},'{month_week}','{runcard}',
+                        Values({year},'{week_no}','{runcard}',
                         {tensile_value},'{tensile_limit}','{tensile_status}','{tensile_defect}',
                         {elongation_value},'{elongation_limit}','{elongation_status}','{elongation_defect}',
                         {roll_value},'{roll_limit}','{roll_status}','{roll_defect}',

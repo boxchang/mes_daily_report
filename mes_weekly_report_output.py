@@ -29,6 +29,7 @@ from dateutil.relativedelta import relativedelta
 import matplotlib.gridspec as gridspec
 import numpy as np
 
+
 class mes_weekly_report(object):
     this_start_date = ""
     this_end_date = ""
@@ -43,7 +44,7 @@ class mes_weekly_report(object):
     image_buffers = []
     mach_list = ""
     year = None
-    month_week = None
+    week_no = None
 
     # Define Style
     percent_style = NamedStyle(name='percent_style', number_format='0.00%')
@@ -102,7 +103,7 @@ class mes_weekly_report(object):
         'Year': '年',
         'WorkOrder': '工單',
         'Machine': '機台',
-        'MonthWeek': '週別',
+        'Week_No': '週別',
         'MaxSpeed': '最大車速',
         'MinSpeed': '最小車速',
         'AvgSpeed': '平均車速',
@@ -179,7 +180,7 @@ class mes_weekly_report(object):
         sql = f"""
             SELECT *
             FROM [MES_OLAP].[dbo].[week_date] 
-            where  [year] = 2025 and [month] =3 and month_week = 'W1'
+            where  [year] = 2025 and [month] =3 and week_no = 'W1'
              and enable = 1
         """
 
@@ -195,12 +196,13 @@ class mes_weekly_report(object):
         self.mode = mode
 
         week_date = Utils().get_week_date_dist()
-        #week_date = self.get_week_date_df_fix()
+        # week_date = self.get_week_date_df_fix()
         self.this_end_date = week_date['end_date']
         self.this_start_date = week_date['start_date']
         self.year = week_date['year']
-        self.month_week = str(week_date['month']) + week_date['month_week']
-        fold_name = str(week_date['year']) + str(week_date['month']).zfill(2) + week_date['month_week']
+        self.week_no = week_date['week_no']
+        self.week_no = str(week_date['week_no'])
+        fold_name = str(week_date['year']) + str(week_date['month']).zfill(2) + 'W' + str(week_date['week_no']).zfill(2)
         save_path = os.path.join("weekly_output", fold_name)
 
         self.save_path = save_path
@@ -213,28 +215,29 @@ class mes_weekly_report(object):
         self.date_mark = "{start_date}_{end_date}".format(start_date=tmp_start_date,
                                                           end_date=tmp_end_date)
 
-
     def generate_excel(self, writer, df, machine_name):
         column_letter = {'belong_to': 'A', 'Machine': 'B', 'Line': 'C', 'Shift': 'D', 'WorkOrder': 'E',
-                 'PartNo': 'F', 'ProductItem': 'G', 'StandardAQL': 'H', 'InspectedAQL': 'I', 'Period': 'J',
-                 'MaxSpeed': 'K', 'MinSpeed': 'L', 'AvgSpeed': 'M', 'StdSpeed': 'N',
-                 'CountingQty': 'O', 'OnlinePacking': 'P', 'WIPPacking': 'Q', 'Target': 'R', 'ScrapQuantity': 'S', 'FaultyQuantity': 'T',
-                 'RunTime': 'U', 'StopTime': 'V', 'AllTime': 'W', 'MonthWeek': 'X',
-                 'Tensile_Value': 'Y', 'Tensile_Limit': 'Z', 'Tensile_Status': 'AA',
-                 'Elongation_Value': 'AB', 'Elongation_Limit': 'AC', 'Elongation_Status': 'AD',
-                 'Roll_Value': 'AE', 'Roll_Limit': 'AF', 'Roll_Status': 'AG',
-                 'Cuff_Value': 'AH', 'Cuff_Limit': 'AI', 'Cuff_Status': 'AJ',
-                 'Palm_Value': 'AK', 'Palm_Limit': 'AL', 'Palm_Status': 'AM',
-                 'Finger_Value': 'AN', 'Finger_Limit': 'AO', 'Finger_Status': 'AP',
-                 'FingerTip_Value': 'AQ', 'FingerTip_Limit': 'AR', 'FingerTip_Status': 'AS',
-                 'Length_Value': 'AT', 'Length_Limit': 'AU', 'Length_Status': 'AV',
-                 'Weight_Value': 'AW', 'Weight_Limit': 'AX', 'Weight_Light': 'AY', 'Weight_Heavy': 'AZ',
-                 'Width_Value': 'BA', 'Width_Limit': 'BB', 'Width_Status': 'BC',
-                 'Pinhole_Value': 'BD', 'Pinhole_Limit': 'BE', 'Pinhole_Status': 'BF', 'IPQC': 'BG',
-                 'SeparateQty': 'BH'
-                }
+                         'PartNo': 'F', 'ProductItem': 'G', 'StandardAQL': 'H', 'InspectedAQL': 'I', 'Period': 'J',
+                         'MaxSpeed': 'K', 'MinSpeed': 'L', 'AvgSpeed': 'M', 'StdSpeed': 'N',
+                         'CountingQty': 'O', 'OnlinePacking': 'P', 'WIPPacking': 'Q', 'Target': 'R',
+                         'ScrapQuantity': 'S', 'FaultyQuantity': 'T',
+                         'RunTime': 'U', 'StopTime': 'V', 'AllTime': 'W', 'Week_No': 'X',
+                         'Tensile_Value': 'Y', 'Tensile_Limit': 'Z', 'Tensile_Status': 'AA',
+                         'Elongation_Value': 'AB', 'Elongation_Limit': 'AC', 'Elongation_Status': 'AD',
+                         'Roll_Value': 'AE', 'Roll_Limit': 'AF', 'Roll_Status': 'AG',
+                         'Cuff_Value': 'AH', 'Cuff_Limit': 'AI', 'Cuff_Status': 'AJ',
+                         'Palm_Value': 'AK', 'Palm_Limit': 'AL', 'Palm_Status': 'AM',
+                         'Finger_Value': 'AN', 'Finger_Limit': 'AO', 'Finger_Status': 'AP',
+                         'FingerTip_Value': 'AQ', 'FingerTip_Limit': 'AR', 'FingerTip_Status': 'AS',
+                         'Length_Value': 'AT', 'Length_Limit': 'AU', 'Length_Status': 'AV',
+                         'Weight_Value': 'AW', 'Weight_Limit': 'AX', 'Weight_Light': 'AY', 'Weight_Heavy': 'AZ',
+                         'Width_Value': 'BA', 'Width_Limit': 'BB', 'Width_Status': 'BC',
+                         'Pinhole_Value': 'BD', 'Pinhole_Limit': 'BE', 'Pinhole_Status': 'BF', 'IPQC': 'BG',
+                         'SeparateQty': 'BH'
+                         }
 
         df['Period'] = df['Period'].apply(lambda x: f"{int(x):02}:00")
+        df['Week_No'] = df['Week_No'].astype(str).apply(lambda x: 'W' + x if not str(x).startswith('W') else x)
         df["Weight_Value"] = df["Weight_Value"].apply(lambda x: f"{x:.2f}")
         df.loc[df['Weight_Value'].isna() | (df['Weight_Value'] == 0), 'Weight_Value'] = ''
 
@@ -286,20 +289,24 @@ class mes_weekly_report(object):
                 if col_letter in [column_letter['MaxSpeed'], column_letter['MinSpeed'], column_letter['AvgSpeed'],
                                   column_letter['StdSpeed']]:
                     cell.alignment = self.right_align_style.alignment
-                elif col_letter in [column_letter['MaxSpeed'], column_letter['MinSpeed'], column_letter['AvgSpeed'],
-                                  column_letter['StdSpeed']]:
+                elif col_letter in [column_letter['Week_No']]:
                     cell.alignment = self.center_align_style.alignment
-                elif col_letter in [column_letter['CountingQty'], column_letter['OnlinePacking'], column_letter['Target'], column_letter['SeparateQty']]:
+                elif col_letter in [column_letter['CountingQty'], column_letter['OnlinePacking'],
+                                    column_letter['Target'], column_letter['SeparateQty']]:
                     cell.number_format = '#,##0'
                     cell.alignment = self.right_align_style.alignment
 
         # # 設置欄的 outlineLevel 讓其可以折疊/展開
-        hide_columns = ['Tensile_Value','Tensile_Limit','Tensile_Status','Elongation_Value','Elongation_Limit','Elongation_Status',
-                        'Roll_Value','Roll_Limit','Roll_Status','Cuff_Value','Cuff_Limit','Cuff_Status','Palm_Value','Palm_Limit','Palm_Status',
-                        'Finger_Value','Finger_Limit','Finger_Status','FingerTip_Value','FingerTip_Limit','FingerTip_Status',
-                        'Length_Value','Length_Limit','Length_Status', 'Weight_Value', 'Weight_Limit', 'Weight_Light', 'Weight_Heavy',
-                        'Width_Value', 'Width_Limit','Width_Status',
-                        'Pinhole_Value','Pinhole_Limit','Pinhole_Status']
+        hide_columns = ['Tensile_Value', 'Tensile_Limit', 'Tensile_Status', 'Elongation_Value', 'Elongation_Limit',
+                        'Elongation_Status',
+                        'Roll_Value', 'Roll_Limit', 'Roll_Status', 'Cuff_Value', 'Cuff_Limit', 'Cuff_Status',
+                        'Palm_Value', 'Palm_Limit', 'Palm_Status',
+                        'Finger_Value', 'Finger_Limit', 'Finger_Status', 'FingerTip_Value', 'FingerTip_Limit',
+                        'FingerTip_Status',
+                        'Length_Value', 'Length_Limit', 'Length_Status', 'Weight_Value', 'Weight_Limit', 'Weight_Light',
+                        'Weight_Heavy',
+                        'Width_Value', 'Width_Limit', 'Width_Status',
+                        'Pinhole_Value', 'Pinhole_Limit', 'Pinhole_Status']
         for column in hide_columns:
             worksheet.column_dimensions[column_letter[column]].outlineLevel = 1
         worksheet.column_dimensions.group(column_letter['Tensile_Value'], column_letter['Pinhole_Status'], hidden=True)
@@ -311,7 +318,6 @@ class mes_weekly_report(object):
         for column in hide_columns:
             worksheet.column_dimensions[column_letter[column]].outlineLevel = 2
         worksheet.column_dimensions.group(column_letter['Roll_Value'], column_letter['FingerTip_Status'], hidden=True)
-
 
         try:
             img = Image(chart_img)
@@ -329,14 +335,14 @@ class mes_weekly_report(object):
         save_path = self.save_path
         date_mark = self.date_mark
         mode = self.mode
-        month_week = self.month_week
+        week_no = self.week_no
         year = self.year
 
         file_name = f'MES_{plant}_{mode}_Report_{date_mark}.xlsx'
         excel_file = os.path.join(save_path, file_name)
         with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
             sql = f"""SELECT WorkDate, Machine, Line, Shift, WorkOrder, PartNo, ProductItem, StandardAQL, InspectedAQL,
-                        Period, MaxSpeed, MinSpeed, AvgSpeed, StdSpeed, CountingQty, OnlinePacking, WIPPacking, Target, ScrapQuantity, FaultyQuantity, RunTime, StopTime, 60 as AllTime, c.MonthWeek,
+                        Period, MaxSpeed, MinSpeed, AvgSpeed, StdSpeed, CountingQty, OnlinePacking, WIPPacking, Target, ScrapQuantity, FaultyQuantity, RunTime, StopTime, 60 as AllTime, wd.week_no as Week_No,
                         Tensile_Value,Tensile_Limit,Tensile_Status,Elongation_Value,Elongation_Limit,Elongation_Status,
                         Roll_Value,Roll_Limit,Roll_Status,Cuff_Value,Cuff_Limit,Cuff_Status,Palm_Value,Palm_Limit,Palm_Status,
                         Finger_Value,Finger_Limit,Finger_Status,FingerTip_Value,FingerTip_Limit,FingerTip_Status,
@@ -346,8 +352,10 @@ class mes_weekly_report(object):
                         Width_Value,Width_Limit,Width_Status,
                         Pinhole_Value,Pinhole_Limit,Pinhole_Status
                         FROM [MES_OLAP].[dbo].[counting_daily_info_raw] c
+                        left join [MES_OLAP].[dbo].[week_date] wd
+                        on c.Week_No = wd.week_no
                         LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on c.Runcard = ipqc.Runcard
-                        where c.Year = {year} and c.MonthWeek = '{month_week}'  
+                        where c.Year = {year} and c.Week_No = '{week_no}'  
                         and c.branch like'%{plant}%'
                         and not (WorkOrder != '' and InspectedAQL ='')
                         --and StandardAQL is not Null and InspectedAQL is not null 
@@ -366,15 +374,16 @@ class mes_weekly_report(object):
             try:
                 df['SeparateQty'] = df.apply(
                     lambda row: row['OnlinePacking'] + row['WIPPacking'] if row['IPQC'] == 'NG'
-                        or (row['StandardAQL'] is not None
-                            and row['InspectedAQL'] is not None
-                            and row['StandardAQL'] < row['InspectedAQL']) else None, axis=1)
+                                                                            or (row['StandardAQL'] is not None
+                                                                                and row['InspectedAQL'] is not None
+                                                                                and row['StandardAQL'] < row[
+                                                                                    'InspectedAQL']) else None, axis=1)
 
                 df.loc[df['Weight_Value'].isna() | (df['Weight_Value'] == 0), 'Target'] = 0
                 df.loc[df['Weight_Value'].isna() | (df['Weight_Value'] == 0), 'CountingQty'] = 0
+                # df.to_excel(writer, sheet_name='Sheet1', index=False)
             except Exception as e:
                 print(e)
-
 
             machine_groups = df.groupby('Machine')
             summary_df = self.generate_summary(writer, machine_groups)
@@ -387,12 +396,12 @@ class mes_weekly_report(object):
             all_mach_sum_df = pd.concat(mach_sum_list)
             self.generate_ipqc_ng_data_excel(writer, all_mach_sum_df)
 
-            self.delete_counting_weekly_info_raw(plant, year, month_week)
-            self.insert_counting_weekly_info_raw(plant, year, month_week, summary_df)
+            self.delete_counting_weekly_info_raw(plant, year, week_no)
+            self.insert_counting_weekly_info_raw(plant, year, week_no, summary_df)
 
             self.generate_12aspect_output_excel(writer, plant)
-            self.generate_12aspect_cosmetic_excel(writer, plant, year, month_week)
-            self.generate_12aspect_cosmetic_summary_excel(writer, plant, year, month_week)
+            self.generate_12aspect_cosmetic_excel(writer, plant, year, week_no)
+            self.generate_12aspect_cosmetic_summary_excel(writer, plant, year, week_no)
 
         self.file_list.append(excel_file)
 
@@ -437,19 +446,20 @@ class mes_weekly_report(object):
         df = df[df['重量值'] > 0]
 
         # 計算 "NG" 的次數
-        df["Length_NG_Count"] = (df["包裝確認量"]+df["半成品數量"]).where(df["長度結果"] == "NG", 0)
-        df["Width_NG_Count"] = (df["包裝確認量"]+df["半成品數量"]).where(df["寬度結果"] == "NG", 0)
-        df["Weight_Light_NG_Count"] = (df["包裝確認量"]+df["半成品數量"]).where(df["超輕檢驗"] == "NG", 0)
+        df["Length_NG_Count"] = (df["包裝確認量"] + df["半成品數量"]).where(df["長度結果"] == "NG", 0)
+        df["Width_NG_Count"] = (df["包裝確認量"] + df["半成品數量"]).where(df["寬度結果"] == "NG", 0)
+        df["Weight_Light_NG_Count"] = (df["包裝確認量"] + df["半成品數量"]).where(df["超輕檢驗"] == "NG", 0)
         df["Weight_Heavy_NG_Count"] = (df["包裝確認量"] + df["半成品數量"]).where(df["超重檢驗"] == "NG", 0)
-        df["Pinhole_NG_Count"] = (df["包裝確認量"]+df["半成品數量"]).where(df["針孔結果"] == "NG", 0)
-        df["Tensile_NG_Count"] = (df["包裝確認量"]+df["半成品數量"]).where(df["抗拉強度結果"] == "NG", 0)
-        df["Elongation_NG_Count"] = (df["包裝確認量"]+df["半成品數量"]).where(df["伸長率結果"] == "NG", 0)
-        df["Roll_NG_Count"] = (df["包裝確認量"]+df["半成品數量"]).where(df["卷唇厚度結果"] == "NG", 0)
-        df["Cuff_NG_Count"] = (df["包裝確認量"]+df["半成品數量"]).where(df["袖厚度結果"] == "NG", 0)
-        df["Palm_NG_Count"] = (df["包裝確認量"]+df["半成品數量"]).where(df["掌厚度結果"] == "NG", 0)
-        df["Finger_NG_Count"] = (df["包裝確認量"]+df["半成品數量"]).where(df["指厚度結果"] == "NG", 0)
-        df["FingerTip_NG_Count"] = (df["包裝確認量"]+df["半成品數量"]).where(df["指尖厚度結果"] == "NG", 0)
-        df["Thickness_NG_Count"] = df["Roll_NG_Count"] + df["Cuff_NG_Count"] + df["Palm_NG_Count"] + df["Finger_NG_Count"] + df["FingerTip_NG_Count"]
+        df["Pinhole_NG_Count"] = (df["包裝確認量"] + df["半成品數量"]).where(df["針孔結果"] == "NG", 0)
+        df["Tensile_NG_Count"] = (df["包裝確認量"] + df["半成品數量"]).where(df["抗拉強度結果"] == "NG", 0)
+        df["Elongation_NG_Count"] = (df["包裝確認量"] + df["半成品數量"]).where(df["伸長率結果"] == "NG", 0)
+        df["Roll_NG_Count"] = (df["包裝確認量"] + df["半成品數量"]).where(df["卷唇厚度結果"] == "NG", 0)
+        df["Cuff_NG_Count"] = (df["包裝確認量"] + df["半成品數量"]).where(df["袖厚度結果"] == "NG", 0)
+        df["Palm_NG_Count"] = (df["包裝確認量"] + df["半成品數量"]).where(df["掌厚度結果"] == "NG", 0)
+        df["Finger_NG_Count"] = (df["包裝確認量"] + df["半成品數量"]).where(df["指厚度結果"] == "NG", 0)
+        df["FingerTip_NG_Count"] = (df["包裝確認量"] + df["半成品數量"]).where(df["指尖厚度結果"] == "NG", 0)
+        df["Thickness_NG_Count"] = df["Roll_NG_Count"] + df["Cuff_NG_Count"] + df["Palm_NG_Count"] + df[
+            "Finger_NG_Count"] + df["FingerTip_NG_Count"]
 
         # 計算總 NG 數量
         df["Total_NG"] = df["Tensile_NG_Count"] + df["Elongation_NG_Count"] + df["Roll_NG_Count"] \
@@ -457,38 +467,48 @@ class mes_weekly_report(object):
                          + df["Length_NG_Count"] + df["Width_NG_Count"] \
                          + df["Weight_Light_NG_Count"] + df["Weight_Heavy_NG_Count"] + df["Pinhole_NG_Count"]
 
-        sum_list = ["包裝確認量", "半成品數量", "廢品數量", "二級品數量", "Length_NG_Count", "Width_NG_Count", "Weight_Light_NG_Count", "Weight_Heavy_NG_Count",
+        sum_list = ["包裝確認量", "半成品數量", "廢品數量", "二級品數量", "Length_NG_Count", "Width_NG_Count", "Weight_Light_NG_Count",
+                    "Weight_Heavy_NG_Count",
                     "Pinhole_NG_Count", "Tensile_NG_Count", "Elongation_NG_Count", "Thickness_NG_Count"]
         df_grouped = df.groupby(["機台", "線別", "品項"], as_index=False)[sum_list].sum()
 
         return df_grouped
 
     # 外觀週累計
-    def generate_12aspect_cosmetic_summary_excel(self, writer, plant, year, month_week):
-        column_letter = {'Plant': 'A', 'Year': 'B', 'MonthWeek': 'C',
-                         'total_6100': 'D', 'LL1_6100': 'E', 'LL1_6100_rate': 'F', 'LL2_6100': 'G', 'LL2_6100_rate': 'H',
-                         'total_6200': 'I', 'LL1_6200': 'J', 'LL1_6200_rate': 'K', 'LL2_6200': 'L', 'LL2_6200_rate': 'M',
-                         'total_6300': 'N', 'LL1_6300': 'O', 'LL1_6300_rate': 'P', 'LL2_6300': 'Q', 'LL2_6300_rate': 'R',
-                         'total_7000': 'S', 'LL1_7000': 'T', 'LL1_7000_rate': 'U', 'LL2_7000': 'V', 'LL2_7000_rate': 'W',
+    def generate_12aspect_cosmetic_summary_excel(self, writer, plant, year, week_no):
+        column_letter = {'Plant': 'A', 'Year': 'B', 'Week_No': 'C',
+                         'total_6100': 'D', 'LL1_6100': 'E', 'LL1_6100_rate': 'F', 'LL2_6100': 'G',
+                         'LL2_6100_rate': 'H',
+                         'total_6200': 'I', 'LL1_6200': 'J', 'LL1_6200_rate': 'K', 'LL2_6200': 'L',
+                         'LL2_6200_rate': 'M',
+                         'total_6300': 'N', 'LL1_6300': 'O', 'LL1_6300_rate': 'P', 'LL2_6300': 'Q',
+                         'LL2_6300_rate': 'R',
+                         'total_7000': 'S', 'LL1_7000': 'T', 'LL1_7000_rate': 'U', 'LL2_7000': 'V',
+                         'LL2_7000_rate': 'W',
                          'critical_qty': 'X', 'critical_rate': 'Y', 'critical_dpm': 'Z',
                          'major_qty': 'AA', 'major_rate': 'AB', 'major_dpm': 'AC',
                          'minor_qty': 'AD', 'minor_rate': 'AE', 'minor_dpm': 'AF',
                          'pinhole_qty': 'AG', 'pinhole_rate': 'AH', 'pinhole_dpm': 'AI', 'cosmetic_check_qty': 'AJ',
                          }
-        header_column = {'Plant': '廠別', 'Year': '年', 'MonthWeek': '週別',
-                         'total_6100': '美線總時數', 'LL1_6100': '美線超重時數', 'LL1_6100_rate': '美線超重比例', 'LL2_6100': '美線超輕時數', 'LL2_6100_rate': '美線超輕比例',
-                         'total_6200': '歐線總時數', 'LL1_6200': '歐線超重時數', 'LL1_6200_rate': '歐線超重比例', 'LL2_6200': '歐線超輕時數', 'LL2_6200_rate': '歐線超輕比例',
-                         'total_6300': '日線總時數', 'LL1_6300': '日線超重時數', 'LL1_6300_rate': '日線超重比例', 'LL2_6300': '日線超輕時數', 'LL2_6300_rate': '日線超輕比例',
-                         'total_7000': 'OBM總時數', 'LL1_7000': 'OBM超重時數', 'LL1_7000_rate': 'OBM超重比例', 'LL2_7000': 'OBM超輕時數', 'LL2_7000_rate': 'OBM超輕比例',
+        header_column = {'Plant': '廠別', 'Year': '年', 'Week_No': '週別',
+                         'total_6100': '美線總時數', 'LL1_6100': '美線超重時數', 'LL1_6100_rate': '美線超重比例', 'LL2_6100': '美線超輕時數',
+                         'LL2_6100_rate': '美線超輕比例',
+                         'total_6200': '歐線總時數', 'LL1_6200': '歐線超重時數', 'LL1_6200_rate': '歐線超重比例', 'LL2_6200': '歐線超輕時數',
+                         'LL2_6200_rate': '歐線超輕比例',
+                         'total_6300': '日線總時數', 'LL1_6300': '日線超重時數', 'LL1_6300_rate': '日線超重比例', 'LL2_6300': '日線超輕時數',
+                         'LL2_6300_rate': '日線超輕比例',
+                         'total_7000': 'OBM總時數', 'LL1_7000': 'OBM超重時數', 'LL1_7000_rate': 'OBM超重比例',
+                         'LL2_7000': 'OBM超輕時數', 'LL2_7000_rate': 'OBM超輕比例',
                          'critical_qty': 'Critical數量', 'critical_rate': 'Critical比例', 'critical_dpm': 'Critical DPM',
                          'major_qty': 'Major數量', 'major_rate': 'Major比例', 'major_dpm': 'Major DPM',
                          'minor_qty': 'Minor數量', 'minor_rate': 'Minor比例', 'minor_dpm': 'Minor DPM',
-                         'pinhole_qty': '針孔數量', 'pinhole_rate': '針孔比例', 'pinhole_dpm': '針孔DPM', 'cosmetic_check_qty': '外觀檢查總數量',
+                         'pinhole_qty': '針孔數量', 'pinhole_rate': '針孔比例', 'pinhole_dpm': '針孔DPM',
+                         'cosmetic_check_qty': '外觀檢查總數量',
                          }
 
         # 外觀週累計
         cosmetic_summary_sql = f"""
-                    SELECT [Plant],r.Year,r.MonthWeek
+                    SELECT [Plant],r.Year,r.Week_No
                           ,[total_6100],[LL1_6100],[LL1_6100_rate],[LL2_6100],[LL2_6100_rate]
                           ,[total_6200],[LL1_6200],[LL1_6200_rate],[LL2_6200],[LL2_6200_rate]
                           ,[total_6300],[LL1_6300],[LL1_6300_rate],[LL2_6300],[LL2_6300_rate]
@@ -499,9 +519,9 @@ class mes_weekly_report(object):
                           ,[pinhole_qty],[pinhole_rate],[pinhole_dpm]
                           ,[cosmetic_check_qty]
                       FROM [MES_OLAP].[dbo].[appearance_weekly_info_raw] r
-                      JOIN [MES_OLAP].[dbo].[week_date] w on r.Year = w.year and r.MonthWeek = Cast(month as varchar)+month_week
+                      JOIN [MES_OLAP].[dbo].[week_date] w on r.Year = w.year and r.Week_No = w.week_no
                       where Plant = '{plant}' and w.enable = 1
-                      order by [MonthWeek]
+                      order by w.week_no
                     """
         cosmetic_summary_data = self.db.select_sql_dict(cosmetic_summary_sql)
         df = pd.DataFrame(cosmetic_summary_data)
@@ -535,12 +555,12 @@ class mes_weekly_report(object):
                     cell.number_format = '#,##0'
                     cell.alignment = self.right_align_style.alignment
                 elif col_letter in [column_letter['LL1_6100_rate'], column_letter['LL2_6100_rate'],
-                                  column_letter['LL1_6200_rate'], column_letter['LL2_6200_rate'],
-                                  column_letter['LL1_6300_rate'], column_letter['LL2_6300_rate'],
-                                  column_letter['LL1_7000_rate'], column_letter['LL2_7000_rate'],
-                                  column_letter['critical_rate'], column_letter['major_rate'],
-                                  column_letter['minor_rate'], column_letter['pinhole_rate'],
-                                  ]:
+                                    column_letter['LL1_6200_rate'], column_letter['LL2_6200_rate'],
+                                    column_letter['LL1_6300_rate'], column_letter['LL2_6300_rate'],
+                                    column_letter['LL1_7000_rate'], column_letter['LL2_7000_rate'],
+                                    column_letter['critical_rate'], column_letter['major_rate'],
+                                    column_letter['minor_rate'], column_letter['pinhole_rate'],
+                                    ]:
                     cell.alignment = self.center_align_style.alignment
                     cell.number_format = '0.00%'
                     worksheet.column_dimensions[col_letter].width = 14
@@ -555,25 +575,34 @@ class mes_weekly_report(object):
         for column in hide_columns:
             worksheet.column_dimensions[column_letter[column]].hidden = True
 
-    def generate_12aspect_cosmetic_excel(self, writer, plant, year, month_week):
+    def generate_12aspect_cosmetic_excel(self, writer, plant, year, week_no):
         column_letter = {'runcard': 'A', 'belong_to': 'B', 'Machine': 'C', 'Line': 'D', 'Shift': 'E',
                          'WorkOrder': 'F', 'PartNo': 'G', 'ProductItem': 'H',
-                        'SalePlaceCode': 'I', 'Period': 'J',
+                         'SalePlaceCode': 'I', 'Period': 'J',
                          '6100LL1': 'K', '6100LL2': 'L',
                          '6200LL1': 'M', '6200LL2': 'N',
                          '6300LL1': 'O', '6300LL2': 'P',
                          '7000LL1': 'Q', '7000LL2': 'R',
-                        }
+                         }
 
-        cosmetic_column_letter = {'AL4': 'S', 'KL3': 'T', 'AL1': 'U', 'IL1': 'V', 'AL2': 'W', 'AL5': 'X', 'AL6': 'Y', 'KL4': 'Z', 'AL7': 'AA', 'IL2': 'AB',
-                                  'ML9': 'AC', 'KN7': 'AD', 'EL1': 'AE', 'BL1': 'AF', 'FL2': 'AG', 'GL2': 'AH', 'BL3': 'AI', 'AL3': 'AJ', 'KN6': 'AK',
+        cosmetic_column_letter = {'AL4': 'S', 'KL3': 'T', 'AL1': 'U', 'IL1': 'V', 'AL2': 'W', 'AL5': 'X', 'AL6': 'Y',
+                                  'KL4': 'Z', 'AL7': 'AA', 'IL2': 'AB',
+                                  'ML9': 'AC', 'KN7': 'AD', 'EL1': 'AE', 'BL1': 'AF', 'FL2': 'AG', 'GL2': 'AH',
+                                  'BL3': 'AI', 'AL3': 'AJ', 'KN6': 'AK',
                                   'BL2': 'AL', 'BN7': 'AM', 'BN1': 'AN', 'HL1': 'AO', 'GN1': 'AP', 'KL2': 'AQ',
-                                  'EN2': 'AR', 'CN1': 'AS', 'FN2': 'AT', 'KN4': 'AU', 'CL1': 'AV', 'BN2': 'AW', 'BN6': 'AX', 'DN1': 'AY', 'BN9': 'AZ',
-                                  'DL4': 'BA', 'BN8': 'BB', 'EL2': 'BC', 'FN1': 'BD', 'EN1': 'BE', 'BN5': 'BF', 'MX3': 'BG', 'CL3': 'BH', 'KN5': 'BI', 'DL3': 'BJ', 'CHECK QTY': 'BK',
-                                  'B': 'BL', 'BT': 'BM', 'BT_1': 'BN', 'C': 'BO', 'C_1': 'BP', 'D1': 'BQ', 'D1_1': 'BR', 'D2': 'BS', 'D2_1': 'BT', 'D3': 'BU', 'D3_1': 'BV', 'D4': 'BW', 'D4_1': 'BX', 'D5': 'BY', 'D5_1': 'BZ',
-                                    'K1': 'CA', 'K1_1': 'CB', 'K2': 'CC', 'K2_1': 'CD', 'K3': 'CE', 'K3_1': 'CF', 'K4': 'CG', 'K4_1': 'CH',
-                                    'N1': 'CI', 'N1_1': 'CJ', 'N2': 'CK', 'N2_1': 'CL', 'N3': 'CM', 'N3_1': 'CN', 'N4': 'CO', 'N4_1': 'CP', 'N5': 'CQ', 'N5_1': 'CR', 'Pinhole': 'CS', 'Pinhole_Sample': 'CT',
-                        }
+                                  'EN2': 'AR', 'CN1': 'AS', 'FN2': 'AT', 'KN4': 'AU', 'CL1': 'AV', 'BN2': 'AW',
+                                  'BN6': 'AX', 'DN1': 'AY', 'BN9': 'AZ',
+                                  'DL4': 'BA', 'BN8': 'BB', 'EL2': 'BC', 'FN1': 'BD', 'EN1': 'BE', 'BN5': 'BF',
+                                  'MX3': 'BG', 'CL3': 'BH', 'KN5': 'BI', 'DL3': 'BJ', 'CHECK QTY': 'BK',
+                                  'B': 'BL', 'BT': 'BM', 'BT_1': 'BN', 'C': 'BO', 'C_1': 'BP', 'D1': 'BQ', 'D1_1': 'BR',
+                                  'D2': 'BS', 'D2_1': 'BT', 'D3': 'BU', 'D3_1': 'BV', 'D4': 'BW', 'D4_1': 'BX',
+                                  'D5': 'BY', 'D5_1': 'BZ',
+                                  'K1': 'CA', 'K1_1': 'CB', 'K2': 'CC', 'K2_1': 'CD', 'K3': 'CE', 'K3_1': 'CF',
+                                  'K4': 'CG', 'K4_1': 'CH',
+                                  'N1': 'CI', 'N1_1': 'CJ', 'N2': 'CK', 'N2_1': 'CL', 'N3': 'CM', 'N3_1': 'CN',
+                                  'N4': 'CO', 'N4_1': 'CP', 'N5': 'CQ', 'N5_1': 'CR', 'Pinhole': 'CS',
+                                  'Pinhole_Sample': 'CT',
+                                  }
 
         try:
 
@@ -582,11 +611,11 @@ class mes_weekly_report(object):
               FROM [MES_OLAP].[dbo].[counting_daily_info_raw] counting
               LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on ipqc.Runcard = counting.Runcard
               LEFT JOIN [MES_OLAP].[dbo].[sap_customer_define] cus on cus.CustomerCode = counting.CustomerCode
-              where counting.Year = {year} and counting.MonthWeek = '{month_week}'
+              where counting.Year = {year} and counting.Week_No = '{week_no}'
               and Machine like '%{plant}%'
               and (OnlinePacking > 0 or WIPPacking > 0)
               order by Machine, WorkDate, Cast(Period as Int)
-            
+
             """
             data = self.db.select_sql_dict(sql)
             df = pd.DataFrame(data)
@@ -596,11 +625,11 @@ class mes_weekly_report(object):
               FROM [MES_OLAP].[dbo].[counting_daily_info_raw] counting
               LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on ipqc.Runcard = counting.Runcard
               LEFT JOIN [MES_OLAP].[dbo].[sap_customer_define] cus on cus.CustomerCode = counting.CustomerCode
-              where counting.Year = {year} and counting.MonthWeek = '{month_week}'
+              where counting.Year = {year} and counting.Week_No = '{week_no}'
               and Weight_Status = 'NG'
               and Machine like '%{plant}%'
               and InspectedAQL is not Null
-              
+
               --6100 美
               --6200 歐
               --6300 日
@@ -613,7 +642,8 @@ class mes_weekly_report(object):
             weight_df = weight_df.pivot(index="runcard", columns="defect_code", values="qty").reset_index()
             order = ["runcard", "6100LL1", "6100LL2", "6200LL1", "6200LL2", "6300LL1", "6300LL2", "7000LL1", "7000LL2"]
             weight_df = weight_df.reindex(columns=order, fill_value='')
-            weight_header = {'6100LL1': '美線過重', '6100LL2': '美線過輕', '6200LL1': '歐線過重', '6200LL2': '歐線過輕', '6300LL1': '日線過重', '6300LL2': '日線過輕', '7000LL1': 'OBM過重', '7000LL2': 'OBM過輕'}
+            weight_header = {'6100LL1': '美線過重', '6100LL2': '美線過輕', '6200LL1': '歐線過重', '6200LL2': '歐線過輕',
+                             '6300LL1': '日線過重', '6300LL2': '日線過輕', '7000LL1': 'OBM過重', '7000LL2': 'OBM過輕'}
 
             defect_sql = f"""
             SELECT [defect_code],
@@ -628,7 +658,7 @@ class mes_weekly_report(object):
               FROM [MES_OLAP].[dbo].[counting_daily_info_raw] r
               LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_cosmetic_data] cos on r.Runcard = cos.runcard
               LEFT JOIN [MES_OLAP].[dbo].[mes_defect_define] d on d.defect_code = cos.defect_code
-              where r.Year = {year} and r.MonthWeek = '{month_week}'
+              where r.Year = {year} and r.Week_No = '{week_no}'
               group by r.runcard, defect_level, d.defect_code, desc2
             """
             cosmetic_data = self.db.select_sql_dict(cosmetic_sql)
@@ -636,9 +666,11 @@ class mes_weekly_report(object):
 
             inspect_qty_df = cosmetic_df[['runcard', 'inspect_qty']].drop_duplicates()
             cosmetic_df = cosmetic_df.pivot(index="runcard", columns="defect_code", values="sum_qty").reset_index()
-            order = ["runcard", "AL4","KL3","AL1","IL1","AL2","AL5","AL6","KL4","AL7","IL2","ML9","KN7","EL1","BL1",
-                     "FL2","GL2","BL3","AL3","KN6","BL2","BN7","BN1","HL1","GN1","KL2","EN2","CN1","FN2","KN4","CL1",
-                     "BN2","BN6","DN1","BN9","DL4","BN8","EL2","FN1","EN1","BN5","MX3","CL3","KN5","DL3"
+            order = ["runcard", "AL4", "KL3", "AL1", "IL1", "AL2", "AL5", "AL6", "KL4", "AL7", "IL2", "ML9", "KN7",
+                     "EL1", "BL1",
+                     "FL2", "GL2", "BL3", "AL3", "KN6", "BL2", "BN7", "BN1", "HL1", "GN1", "KL2", "EN2", "CN1", "FN2",
+                     "KN4", "CL1",
+                     "BN2", "BN6", "DN1", "BN9", "DL4", "BN8", "EL2", "FN1", "EN1", "BN5", "MX3", "CL3", "KN5", "DL3"
                      ]
             cosmetic_df = cosmetic_df.reindex(columns=order, fill_value='')
 
@@ -648,7 +680,7 @@ class mes_weekly_report(object):
               FROM [MES_OLAP].[dbo].[counting_daily_info_raw] r
               JOIN [MES_OLAP].[dbo].[mes_ipqc_pinhole_data] cos on r.Runcard = cos.runcard
               JOIN [MES_OLAP].[dbo].[mes_defect_define] d on d.defect_code = cos.defect_code
-              where r.Year = {year} and r.MonthWeek = '{month_week}'
+              where r.Year = {year} and r.Week_No = '{week_no}'
               group by r.runcard, defect_level, d.defect_code, desc2
             """
             pinhole_data = self.db.select_sql_dict(pinhole_sql)
@@ -690,7 +722,8 @@ class mes_weekly_report(object):
                 'N1', 'N1_1', 'N2', 'N2_1', 'N3', 'N3_1', 'N4', 'N4_1', 'N5', 'N5_1', 'Pinhole', 'Pinhole_Sample', ]
 
             # 確保所有 defect_code 欄位都存在，順序與 expected_defect_codes 一致
-            all_columns = ['runcard', 'belong_to', 'Machine', 'Line', 'Shift', 'WorkOrder', 'PartNo', 'ProductItem', 'SalePlaceCode', 'Period'] + sum_item  # 保持固定順序
+            all_columns = ['runcard', 'belong_to', 'Machine', 'Line', 'Shift', 'WorkOrder', 'PartNo', 'ProductItem',
+                           'SalePlaceCode', 'Period'] + sum_item  # 保持固定順序
             df = df.reindex(columns=all_columns, fill_value='')
 
             sum_list = {}
@@ -733,14 +766,13 @@ class mes_weekly_report(object):
             critical_dpm = round(critical_rate * 1000000, 0)
 
             sum_major = sum_list['ML9'] + sum_list['KN7'] + sum_list['EL1'] + sum_list['BL1'] + sum_list['FL2'] + \
-                           sum_list['GL2'] + sum_list['BL3'] + sum_list['AL3'] + sum_list['KN6'] + sum_list['BL2'] + \
+                        sum_list['GL2'] + sum_list['BL3'] + sum_list['AL3'] + sum_list['KN6'] + sum_list['BL2'] + \
                         sum_list['BN7'] + sum_list['BN1'] + sum_list['HL1'] + sum_list['GN1'] + sum_list['KL2']
             major_rate = round(sum_major / sum_inspect_qty, 4)
             major_dpm = round(major_rate * 1000000, 0)
 
-
             sum_minor = sum_list['EN2'] + sum_list['CN1'] + sum_list['FN2'] + sum_list['KN4'] + sum_list['CL1'] + \
-                           sum_list['BN2'] + sum_list['BN6'] + sum_list['DN1'] + sum_list['BN9'] + sum_list['DL4'] + \
+                        sum_list['BN2'] + sum_list['BN6'] + sum_list['DN1'] + sum_list['BN9'] + sum_list['DL4'] + \
                         sum_list['BN8'] + sum_list['EL2'] + sum_list['FN1'] + sum_list['EN1'] + \
                         sum_list['MX3'] + sum_list['CL3'] + sum_list['KN5'] + sum_list['DL3']
             minor_rate = round(sum_minor / sum_inspect_qty, 4)
@@ -776,8 +808,10 @@ class mes_weekly_report(object):
 
             # Weight Header
             worksheet.merge_cells(f"{column_letter['6100LL1']}1:{column_letter['7000LL2']}1")
-            start_row, start_col = worksheet[f"{column_letter['6100LL1']}1"].row, worksheet[f"{column_letter['6100LL1']}1"].column
-            end_row, end_col = worksheet[f"{column_letter['7000LL2']}1"].row, worksheet[f"{column_letter['7000LL2']}1"].column
+            start_row, start_col = worksheet[f"{column_letter['6100LL1']}1"].row, worksheet[
+                f"{column_letter['6100LL1']}1"].column
+            end_row, end_col = worksheet[f"{column_letter['7000LL2']}1"].row, worksheet[
+                f"{column_letter['7000LL2']}1"].column
             cell = worksheet[f"{column_letter['6100LL1']}1"]
             cell.value = "重量檢驗"
             cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -790,8 +824,10 @@ class mes_weekly_report(object):
 
             # Cosmetic Header
             worksheet.merge_cells(f"{cosmetic_column_letter['AL4']}1:{cosmetic_column_letter['IL2']}1")
-            start_row, start_col = worksheet[f"{cosmetic_column_letter['AL4']}1"].row, worksheet[f"{cosmetic_column_letter['AL4']}1"].column
-            end_row, end_col = worksheet[f"{cosmetic_column_letter['IL2']}1"].row, worksheet[f"{cosmetic_column_letter['IL2']}1"].column
+            start_row, start_col = worksheet[f"{cosmetic_column_letter['AL4']}1"].row, worksheet[
+                f"{cosmetic_column_letter['AL4']}1"].column
+            end_row, end_col = worksheet[f"{cosmetic_column_letter['IL2']}1"].row, worksheet[
+                f"{cosmetic_column_letter['IL2']}1"].column
             cell = worksheet[f"{cosmetic_column_letter['AL4']}1"]
             cell.value = "外觀CRITICAL"
             cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -802,8 +838,10 @@ class mes_weekly_report(object):
                     cell.fill = fill_style
 
             worksheet.merge_cells(f"{cosmetic_column_letter['ML9']}1:{cosmetic_column_letter['KL2']}1")
-            start_row, start_col = worksheet[f"{cosmetic_column_letter['ML9']}1"].row, worksheet[f"{cosmetic_column_letter['ML9']}1"].column
-            end_row, end_col = worksheet[f"{cosmetic_column_letter['KL2']}1"].row, worksheet[f"{cosmetic_column_letter['KL2']}1"].column
+            start_row, start_col = worksheet[f"{cosmetic_column_letter['ML9']}1"].row, worksheet[
+                f"{cosmetic_column_letter['ML9']}1"].column
+            end_row, end_col = worksheet[f"{cosmetic_column_letter['KL2']}1"].row, worksheet[
+                f"{cosmetic_column_letter['KL2']}1"].column
             cell = worksheet[f"{cosmetic_column_letter['ML9']}1"]
             cell.value = "外觀MAJOR"
             cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -814,8 +852,10 @@ class mes_weekly_report(object):
                     cell.fill = fill_style
 
             worksheet.merge_cells(f"{cosmetic_column_letter['EN2']}1:{cosmetic_column_letter['DL3']}1")
-            start_row, start_col = worksheet[f"{cosmetic_column_letter['EN2']}1"].row, worksheet[f"{cosmetic_column_letter['EN2']}1"].column
-            end_row, end_col = worksheet[f"{cosmetic_column_letter['DL3']}1"].row, worksheet[f"{cosmetic_column_letter['DL3']}1"].column
+            start_row, start_col = worksheet[f"{cosmetic_column_letter['EN2']}1"].row, worksheet[
+                f"{cosmetic_column_letter['EN2']}1"].column
+            end_row, end_col = worksheet[f"{cosmetic_column_letter['DL3']}1"].row, worksheet[
+                f"{cosmetic_column_letter['DL3']}1"].column
             cell = worksheet[f"{cosmetic_column_letter['EN2']}1"]
             cell.value = "外觀MINOR"
             cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -827,8 +867,10 @@ class mes_weekly_report(object):
 
             # Pinhole Header
             worksheet.merge_cells(f"{cosmetic_column_letter['B']}1:{cosmetic_column_letter['N5_1']}1")
-            start_row, start_col = worksheet[f"{cosmetic_column_letter['B']}1"].row, worksheet[f"{cosmetic_column_letter['B']}1"].column
-            end_row, end_col = worksheet[f"{cosmetic_column_letter['N5_1']}1"].row, worksheet[f"{cosmetic_column_letter['N5_1']}1"].column
+            start_row, start_col = worksheet[f"{cosmetic_column_letter['B']}1"].row, worksheet[
+                f"{cosmetic_column_letter['B']}1"].column
+            end_row, end_col = worksheet[f"{cosmetic_column_letter['N5_1']}1"].row, worksheet[
+                f"{cosmetic_column_letter['N5_1']}1"].column
             cell = worksheet[f"{cosmetic_column_letter['B']}1"]
             cell.value = "針孔"
             cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -856,9 +898,9 @@ class mes_weekly_report(object):
                 for cell in col:
                     if col_letter in [column_letter['runcard'], column_letter['belong_to'], column_letter['Machine'],
                                       column_letter['Line'], column_letter['Shift'], column_letter['WorkOrder'],
-                                      column_letter['PartNo'], column_letter['ProductItem'], column_letter['SalePlaceCode'],
+                                      column_letter['PartNo'], column_letter['ProductItem'],
+                                      column_letter['SalePlaceCode'],
                                       column_letter['Period']]:
-
                         cell.alignment = self.center_align_style.alignment
 
                     # if col_letter in [colmn_letter['Activation'], colmn_letter['OEE']]:
@@ -866,7 +908,7 @@ class mes_weekly_report(object):
 
             # 最後一行加總
             thin_top_border = Border(top=Side(style="thin"))
-            last_row = worksheet.max_row+1
+            last_row = worksheet.max_row + 1
 
             # K 欄 (11) 到 CT 欄 (96)
             for col_idx in range(11, 98 + 1):
@@ -881,15 +923,14 @@ class mes_weekly_report(object):
                     cell_above = worksheet[f"{col_letter}{last_row}"]
                     cell_above.border = thin_top_border  # ✅ 設定上方框線
 
-
             delete_sql = f"""
             DELETE FROM [MES_OLAP].[dbo].[appearance_weekly_info_raw]
-            WHERE Plant = '{plant}' AND [Year] = {year} AND MonthWeek = '{month_week}'
+            WHERE Plant = '{plant}' AND [Year] = {year} AND Week_No = '{week_no}'
             """
             self.db.execute_sql(delete_sql)
 
             insert_sql = f"""
-            INSERT INTO [MES_OLAP].[dbo].[appearance_weekly_info_raw] (Plant, Year, MonthWeek, 
+            INSERT INTO [MES_OLAP].[dbo].[appearance_weekly_info_raw] (Plant, Year, Week_No, 
             total_6100, LL1_6100, LL1_6100_rate, LL2_6100, LL2_6100_rate, 
             total_6200, LL1_6200, LL1_6200_rate, LL2_6200, LL2_6200_rate,
             total_6300, LL1_6300, LL1_6300_rate, LL2_6300, LL2_6300_rate,
@@ -897,7 +938,7 @@ class mes_weekly_report(object):
             critical_qty, critical_rate, critical_dpm,
             major_qty, major_rate, major_dpm, minor_qty, minor_rate, minor_dpm, pinhole_qty, pinhole_rate, pinhole_dpm,
             cosmetic_check_qty, pinhole_check_qty)
-            VALUES('{plant}', {year}, '{month_week}', 
+            VALUES('{plant}', {year}, '{week_no}', 
             {count_6100_qty}, {sum_LL1_6100}, {rate_LL1_6100}, {sum_LL2_6100}, {rate_LL2_6100}, 
             {count_6200_qty}, {sum_LL1_6200}, {rate_LL1_6200}, {sum_LL2_6200}, {rate_LL2_6200},
             {count_6300_qty}, {sum_LL1_6300}, {rate_LL1_6300}, {sum_LL2_6300}, {rate_LL2_6300}, 
@@ -912,19 +953,21 @@ class mes_weekly_report(object):
             print(e)
 
     def generate_12aspect_output_excel(self, writer, plant):
-        colmn_letter = {'Plant': 'A', 'Year': 'B', 'MonthWeek': 'C', 'CountingQty': 'D', 'SeparateQty': 'E', 'AvgSpeed': 'F',
-                        'Capacity': 'G', 'Yield': 'H', 'Activation': 'I', 'OEE': 'J', 'SeparateRate': 'K', 'ScrapRate': 'L',
+        colmn_letter = {'Plant': 'A', 'Year': 'B', 'Week_No': 'C', 'CountingQty': 'D', 'SeparateQty': 'E',
+                        'AvgSpeed': 'F',
+                        'Capacity': 'G', 'Yield': 'H', 'Activation': 'I', 'OEE': 'J', 'SeparateRate': 'K',
+                        'ScrapRate': 'L',
                         'Target': 'M', 'OnlinePacking': 'N', 'Gap': 'O'}
 
         sql = f"""
-            SELECT [Plant], r.Year, [MonthWeek]
+            SELECT [Plant], r.Year, w.week_no
               ,[CountingQty],[SeparateQty] SeparateQuantity,[AvgSpeed]
               ,[Capacity],[Yield],[Activation]
               ,[OEE],[SeparateRate],[ScrapRate],[Target],[OnlinePacking], Target-OnlinePacking Gap
           FROM [MES_OLAP].[dbo].[counting_weekly_info_raw] r
-          JOIN [MES_OLAP].[dbo].[week_date] w on r.Year = w.year and r.MonthWeek = Cast(month as varchar)+month_week
+          JOIN [MES_OLAP].[dbo].[week_date] w on r.Year = w.year and r.Week_No = w.week_no
           where Plant = '{plant}' and w.enable = 1
-          Order by [MonthWeek]
+          Order by w.week_no
         """
         data = self.db.select_sql_dict(sql)
         df = pd.DataFrame(data)
@@ -933,8 +976,6 @@ class mes_weekly_report(object):
 
         sheet_name = "週累計"
         df.to_excel(writer, sheet_name=sheet_name, index=False)
-
-
 
         # Read the written Excel file
         workbook = writer.book
@@ -959,7 +1000,8 @@ class mes_weekly_report(object):
             # Set alignment
             for cell in col:
                 if col_letter in [colmn_letter['CountingQty'], colmn_letter['SeparateQty'],
-                                  colmn_letter['OnlinePacking'], colmn_letter['Target'], colmn_letter['Gap']]:  # Apply right alignment for specific columns
+                                  colmn_letter['OnlinePacking'], colmn_letter['Target'],
+                                  colmn_letter['Gap']]:  # Apply right alignment for specific columns
                     cell.number_format = '#,##0'
                     cell.alignment = self.right_align_style.alignment
                 elif col_letter in [colmn_letter['Activation'], colmn_letter['Capacity'], colmn_letter['Yield'],
@@ -974,13 +1016,15 @@ class mes_weekly_report(object):
                     worksheet.column_dimensions[col_letter].hidden = True
 
     def generate_summary(self, writer, machine_groups):
-        colmn_letter = {'Name': 'A', 'Week': 'B', 'shift': 'C', 'Line': 'D', 'CountingQty': 'E', 'FaultyQty': 'F', 'ScrapQty': 'G',
+        colmn_letter = {'Name': 'A', 'Week': 'B', 'shift': 'C', 'Line': 'D', 'CountingQty': 'E', 'FaultyQty': 'F',
+                        'ScrapQty': 'G',
                         'SeparateQty': 'H', 'OnlinePacking': 'I', 'RunTime': 'J', 'AllTime': 'K',
-                        'AvgSpeed': 'L', 'Target': 'M', 'Capacity': 'N', 'Yield': 'O', 'Activation': 'P', 'OEE': 'Q', 'Achievement': 'R', 'SeparateRate': 'S'}
+                        'AvgSpeed': 'L', 'Target': 'M', 'Capacity': 'N', 'Yield': 'O', 'Activation': 'P', 'OEE': 'Q',
+                        'Achievement': 'R', 'SeparateRate': 'S'}
         summary_data = []
         tmp_date = self.date_mark.replace('_', '~')
 
-        tmp_week = f"{self.month_week} ({tmp_date})"
+        tmp_week = f"{self.week_no} ({tmp_date})"
 
         thin_border_top = Border(top=Side(style="thin"))
         thin_border_bottom = Border(bottom=Side(style="thin"))
@@ -1038,21 +1082,22 @@ class mes_weekly_report(object):
             # 稼動率allTime必須扣除計劃性停機時間
             # activation = round(runTime/allTime, 3) if int(allTime) > 0 else 0
             activation = ''
-            output = countingQty+faultyQty+scrapQty
-            capacity = round(output/target, 3) if int(target) > 0 else 0
-            _yield = round((onlinePacking-separateQty)/output, 3) if int(output) > 0 else 0
+            output = countingQty + faultyQty + scrapQty
+            capacity = round(output / target, 3) if int(target) > 0 else 0
+            _yield = round((onlinePacking - separateQty) / output, 3) if int(output) > 0 else 0
 
             # 等有稼動率才能做OEE
             # oee = round(activation * capacity * _yield, 3)
             oee = ''
-            rate = round(onlinePacking/target, 3) if int(target) > 0 else 0
-            separateRate = round(separateQty/onlinePacking, 3) if int(onlinePacking) > 0 else 0
+            rate = round(onlinePacking / target, 3) if int(target) > 0 else 0
+            separateRate = round(separateQty / onlinePacking, 3) if int(onlinePacking) > 0 else 0
 
             summary_data.append({'Name': machine_name, 'Date': tmp_week, 'Shift': '', 'Line': '',
                                  'CountingQty': countingQty, 'FaultyQuantity': faultyQty, 'ScrapQuantity': scrapQty,
                                  'SeparateQuantity': separateQty, 'OnlinePacking': onlinePacking,
                                  'RunTime': runTime, 'AllTime': allTime, 'AvgSpeed': avgSpeed, 'Target': target,
-                                 'Capacity': capacity, 'Yield': _yield, 'Activation': activation, 'OEE': oee, 'Achievement Rate': rate, 'SeparateRate': separateRate})
+                                 'Capacity': capacity, 'Yield': _yield, 'Activation': activation, 'OEE': oee,
+                                 'Achievement Rate': rate, 'SeparateRate': separateRate})
         summary_df = pd.DataFrame(summary_data)
         # Change column names
         summary_df.rename(columns=self.header_columns, inplace=True)
@@ -1077,11 +1122,14 @@ class mes_weekly_report(object):
 
             # Set alignment
             for cell in col:
-                if col_letter in [colmn_letter['CountingQty'], colmn_letter['FaultyQty'], colmn_letter['ScrapQty'], colmn_letter['SeparateQty'],
-                                  colmn_letter['OnlinePacking'], colmn_letter['Target'], colmn_letter['RunTime'], colmn_letter['AllTime']]:  # Apply right alignment for specific columns
+                if col_letter in [colmn_letter['CountingQty'], colmn_letter['FaultyQty'], colmn_letter['ScrapQty'],
+                                  colmn_letter['SeparateQty'],
+                                  colmn_letter['OnlinePacking'], colmn_letter['Target'], colmn_letter['RunTime'],
+                                  colmn_letter['AllTime']]:  # Apply right alignment for specific columns
                     cell.number_format = '#,##0'
                     cell.alignment = self.right_align_style.alignment
-                elif col_letter in [colmn_letter['Activation'], colmn_letter['Capacity'], colmn_letter['Yield'], colmn_letter['OEE'], colmn_letter['Achievement'], colmn_letter['SeparateRate']]:
+                elif col_letter in [colmn_letter['Activation'], colmn_letter['Capacity'], colmn_letter['Yield'],
+                                    colmn_letter['OEE'], colmn_letter['Achievement'], colmn_letter['SeparateRate']]:
                     worksheet.column_dimensions[col_letter].width = 15
                     cell.alignment = self.center_align_style.alignment
                     cell.number_format = '0.0%'
@@ -1168,6 +1216,7 @@ class mes_weekly_report(object):
         last_start_date = self.last_start_date
         last_end_date = self.last_end_date
         mode = self.mode
+        week_no = self.week_no
         save_path = self.save_path
         date_mark = self.date_mark
         yticks_labels = []
@@ -1210,11 +1259,11 @@ class mes_weekly_report(object):
         fig, ax1 = plt.subplots(figsize=(16, 9))
 
         this_week_bars = ax1.bar([i for i in x_range], this_data, width=bar_width,
-                                  label=f"包裝確認量",
-                                  align='center', color='#10ba81')
+                                 label=f"包裝確認量",
+                                 align='center', color='#10ba81')
         unfinish_bars = ax1.bar([i for i in x_range], this_unfinish, width=bar_width, bottom=this_data,
-                                  label=f"週目標差異",
-                                  align='center', color='lightgreen')
+                                label=f"週目標差異",
+                                align='center', color='lightgreen')
 
         ax1.set_xticks(x_range)
         ax1.set_xticklabels(x_labels, rotation=0, ha="center", fontsize=12)
@@ -1238,7 +1287,7 @@ class mes_weekly_report(object):
 
             ax1.text(
                 bar.get_x() + bar.get_width() / 2,
-                height+unfinish_height,
+                height + unfinish_height,
                 show_text,
                 ha='center', va='bottom', fontsize=12  # Align the text
             )
@@ -1264,10 +1313,10 @@ class mes_weekly_report(object):
         ly_label = "Product (百萬)"
 
         name = self.date_mark
-        title = f"\n{plant} {self.year} {self.month_week} ({name})目標達成率\n"
+        title = f"\n{plant} {self.year} 第{self.week_no}週 ({name})目標達成率\n"
 
         # Achievement Rate Standard Line
-        if "NBR" in plant :
+        if "NBR" in plant:
             target_rate = 95
         elif "PVC" in plant:
             target_rate = 98
@@ -1406,9 +1455,14 @@ class mes_weekly_report(object):
         x_labels = [str(item['name']).split('_')[-1] for item in data]
         x_range = range(len(x_labels))
 
-        scrap = [round((item['scrap'] / (item['sum_qty']+item['scrap']+item['secondgrade'])) * 100, 2) if item['sum_qty'] > 0 else 0 for item in data]
-        secondgrade = [round((item['secondgrade'] / (item['sum_qty']+item['scrap']+item['secondgrade'])) * 100, 2) if item['sum_qty'] > 0 else 0 for item in
-                       data]
+        scrap = [round((item['scrap'] / (item['sum_qty'] + item['scrap'] + item['secondgrade'])) * 100, 2) if item[
+                                                                                                                  'sum_qty'] > 0 else 0
+                 for item in data]
+        secondgrade = [
+            round((item['secondgrade'] / (item['sum_qty'] + item['scrap'] + item['secondgrade'])) * 100, 2) if item[
+                                                                                                                   'sum_qty'] > 0 else 0
+            for item in
+            data]
 
         # 過濾 scrap 數據
         filtered_x_scrap, filtered_scrap = self.filter_valid_data(x_range, scrap)
@@ -1440,7 +1494,8 @@ class mes_weekly_report(object):
 
         offset = 0.03
         for i, scrap_val in enumerate(filtered_scrap):
-            ax1.text(filtered_x_scrap[i], scrap_val+offset, f"{scrap_val:.2f}%", ha='center', va='bottom', fontsize=12,
+            ax1.text(filtered_x_scrap[i], scrap_val + offset, f"{scrap_val:.2f}%", ha='center', va='bottom',
+                     fontsize=12,
                      color='#ED7D31')
 
         # Subplot for secondgrade
@@ -1462,7 +1517,8 @@ class mes_weekly_report(object):
 
         offset = 0.03
         for i, secondgrade_val in enumerate(filtered_secondgrade):
-            ax2.text(filtered_x_secondgrade[i], secondgrade_val+offset, f"{secondgrade_val:.2f}%", ha='center', va='bottom',
+            ax2.text(filtered_x_secondgrade[i], secondgrade_val + offset, f"{secondgrade_val:.2f}%", ha='center',
+                     va='bottom',
                      fontsize=12, color='#70AD47')
 
         # Add a title for the entire figure
@@ -1555,7 +1611,7 @@ class mes_weekly_report(object):
         msg['From'] = f"{sender_alias} <{sender_email}>"
         msg['To'] = ', '.join(to_emails)
 
-        msg['Subject'] = f'[GD Report] {self.year} {self.month_week}達成率報表 {date_mark}'
+        msg['Subject'] = f'[GD Report] {self.year} 第{self.week_no}週達成率報表 {date_mark}'
 
         # Mail Content
         html = """\
@@ -1684,7 +1740,7 @@ class mes_weekly_report(object):
 
                 print(machine['name'])
                 for i, item in enumerate(week_date):
-                    week_name = x_labels[i]
+                    week_name = 'W' + x_labels[i]
                     if item[0] < start_date:
                         this_data.append(0)
                         this_rate.append(0)
@@ -1707,7 +1763,7 @@ class mes_weekly_report(object):
 									GROUP BY Machine
 							) A
                             """
-                    print(sql)
+                    # print(sql)
                     rows = vnedc_database().select_sql_dict(sql)
                     if len(rows) == 0:
                         this_data.append(0)
@@ -1742,13 +1798,12 @@ class mes_weekly_report(object):
                 plt.figure(figsize=(24, 9))
                 fig, ax1 = plt.subplots(figsize=(24, 9))
                 this_week_bars = ax1.bar([i for i in x_range], this_data, width=bar_width,
-                                          label=f"包裝確認量週累計", align='center', color='#10ba81')
+                                         label=f"包裝確認量週累計", align='center', color='#10ba81')
                 unfinish_bars = ax1.bar([i for i in x_range], unfinish_data, width=bar_width, bottom=this_data,
                                         label=f"週目標差異",
                                         align='center', color='lightgreen')
                 ax1.set_xticks(x_range)
                 ax1.set_xticklabels(x_labels, rotation=0, ha="center", fontsize=12)
-
 
                 for index, bar in enumerate(this_week_bars):
                     height = bar.get_height()
@@ -1871,6 +1926,7 @@ class mes_weekly_report(object):
 
                 plt.savefig(f"{chart_img}", dpi=100, bbox_inches="tight", pad_inches=0.45)
                 plt.close('all')
+                print(f"==> ok")
             except Exception as e:
                 print(f"{machine['name']}: {e}")
                 pass
@@ -1895,21 +1951,21 @@ class mes_weekly_report(object):
             self.mach_list = self.get_mach_list(plant)
             self.generate_chart(plant)
             if self.mode == 'WEEKLY':
-                 self.weekly_chart(plant)
+                self.weekly_chart(plant)
             self.rate_chart(plant)
             self.generate_raw_excel(plant)
 
-        self.send_email(self.file_list, self.image_buffers)
+        # self.send_email(self.file_list, self.image_buffers)
 
-    def delete_counting_weekly_info_raw(self, plant, year, month_week):
+    def delete_counting_weekly_info_raw(self, plant, year, week_no):
         mes_olap = mes_olap_database()
         sql = f"""
             delete from [MES_OLAP].[dbo].[counting_weekly_info_raw]
-            where Plant = '{plant}' and [Year] = {year} and MonthWeek = '{month_week}'
+            where Plant = '{plant}' and [Year] = {year} and Week_No = '{week_no}'
         """
         mes_olap.execute_sql(sql)
 
-    def insert_counting_weekly_info_raw(self, plant, year, month_week, summary_df):
+    def insert_counting_weekly_info_raw(self, plant, year, week_no, summary_df):
         mes_olap = mes_olap_database()
         # Only show data which activation not null
         df = summary_df.loc[summary_df["良率"].notna() & (summary_df["良率"] != "")]
@@ -1934,13 +1990,14 @@ class mes_weekly_report(object):
         scrap_rate = round(scrap_sum / (counting_sum + faulty_sum + scrap_sum), 3)
 
         sql = f"""
-        Insert into [MES_OLAP].[dbo].[counting_weekly_info_raw](Plant, [Year], MonthWeek, CountingQty, SeparateQty, AvgSpeed, 
+        Insert into [MES_OLAP].[dbo].[counting_weekly_info_raw](Plant, [Year], Week_No, CountingQty, SeparateQty, AvgSpeed, 
         Activation, Capacity, Yield, OEE, SeparateRate, ScrapRate, Target, OnlinePacking)
-        Values('{plant}', {year}, '{month_week}', {counting_sum}, {separate_sum}, {speed_avg}, 
+        Values('{plant}', {year}, '{week_no}', {counting_sum}, {separate_sum}, {speed_avg}, 
         {activation_avg}, {capacity_avg},{yield_avg},{oee_avg},{separate_rate},{scrap_rate},{target_sum},{onlinePacking_sum})
         """
         print(sql)
         mes_olap.execute_sql(sql)
+
 
 import argparse
 from datetime import datetime, timedelta, date

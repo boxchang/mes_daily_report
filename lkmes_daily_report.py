@@ -114,7 +114,7 @@ class mes_daily_report(object):
 
         return smtp_config, to_emails, admin_emails
 
-    def send_email(self, file_list, image_buffers, data_date, error_msg):
+    def send_email(self, file_list, image_buffers, data_date, error_msg, normal_msg=None):
         logging.info(f"Start to send Email")
         smtp_config, to_emails, admin_emails = self.read_config('lkmes_daily_report_mail.config')
 
@@ -132,9 +132,10 @@ class mes_daily_report(object):
         msg['Subject'] = f'[LK Report] 產量日報表 {data_date}'
 
         # Mail Content
-        html = """\
+        html = f"""\
                 <html>
                   <body>
+                  {normal_msg}
                 """
         for i in range(len(image_buffers)):
             html += f'<img src="cid:chart_image{i}"><br>'
@@ -293,7 +294,7 @@ class mes_daily_report(object):
 
         file_list = []
         error_list = []
-        error_msg = ""
+        msg_list = []
 
         # Email Attachment
         image_buffers = []
@@ -343,24 +344,6 @@ class mes_daily_report(object):
 
                 df_with_subtotals, df_chart, df_activation = self.sorting_data(self.mes_db, df_selected)
 
-                # 生產時間不可能超過24小時，防呆檢查
-                numeric_production_time = df_with_subtotals['生產時間'].str.rstrip('H').astype(float)
-                has_greater_than_24 = (numeric_production_time > 24).any()
-                if has_greater_than_24:
-                    is_greater_than_24 = True
-                    error_list.append(f"{plant}發生總時數超過24，可能IPQC有用錯RunCard的情況")
-
-                # 判斷是否有用其他方式收貨，要去詢問產線異常原因
-                abnormal_machine = ""
-                for _, row in df_final.iterrows():
-                    if not pd.isna(row['sum_qty']) and not pd.isna(row['Ticket_Qty']):
-                        if int(row['sum_qty']) < 100 and int(row['Ticket_Qty']) > 1000:
-                            special_output = True
-                            abnormal_machine = row['Name']
-                            break
-                if special_output:
-                    error_list.append(f"{abnormal_machine} 點數機資料與SAP入庫資料差異過大，可能發生用舊點數機的情況")
-
                 with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
                     self.generate_summary_excel(writer, df_with_subtotals)
 
@@ -381,6 +364,29 @@ class mes_daily_report(object):
                 image_buffer = self.generate_chart(save_path, plant, report_date1, df_chart)
                 image_buffers.append(image_buffer)
 
+                # 生產時間不可能超過24小時，防呆檢查
+                numeric_production_time = df_with_subtotals['生產時間'].str.rstrip('H').astype(float)
+                machines_exceeding_24 = df_with_subtotals.loc[numeric_production_time > 24, '機台號'].unique()
+                if machines_exceeding_24.size > 0:
+                    for machine in machines_exceeding_24:
+                        for normal_msg in msg_list:
+                            if machine in normal_msg:
+                                break
+                            else:
+                                error_list.append(f"{machine}發生總時數超過24，可能IPQC有用錯RunCard的情況")
+
+                # 判斷是否有用其他方式收貨，要去詢問產線異常原因
+                for _, row in df_final.iterrows():
+                    if not pd.isna(row['sum_qty']) and not pd.isna(row['Ticket_Qty']):
+                        if int(row['sum_qty']) < 100 and int(row['Ticket_Qty']) > 1000:
+                            abnormal_machine = row['Name']
+                            # 判斷正常情況不歸屬點數機異常
+                            for normal_msg in msg_list:
+                                if abnormal_machine in normal_msg:
+                                    break
+                                else:
+                                    error_list.append(f"{abnormal_machine} 點數機資料與SAP入庫資料差異過大，可能發生用舊點數機的情況")
+
                 if isNoStandard:
                     error_list.append(f"有品項尚未維護標準值，無法計算目標產量")
 
@@ -395,8 +401,15 @@ class mes_daily_report(object):
         isCountingErrorResult, error_device = self.isCountingError(report_date1, report_date2)
         if isCountingErrorResult:
             for device in error_device:
-                error_list.append(f"{device}點數機資料異常")
+                # 判斷正常情況不歸屬點數機異常
+                for normal_msg in msg_list:
+                    if device in normal_msg:
+                        break
+                    else:
+                        error_list.append(f"{device}點數機資料異常")
         error_msg = '<br>'.join(error_list)
+        normal_msg = '<br>'.join(msg_list)
+        normal_msg = normal_msg + '<br>'
 
         if len(error_list) > 0:
             if not fix_mode:
@@ -410,7 +423,7 @@ class mes_daily_report(object):
                 reSent = 0
                 while reSent < max_reSend:
                     try:
-                        self.send_email(file_list, image_buffers, report_date1, error_msg)
+                        self.send_email(file_list, image_buffers, report_date1, error_msg, normal_msg=normal_msg)
                         print('Email sent successfully')
                         logging.info(f"Email sent successfully")
                         break
@@ -429,13 +442,13 @@ class mes_daily_report(object):
         error_device = []
 
         sql = f"""
-        SELECT distinct device_group 
-          FROM [LKEDC].[dbo].[spiderweb_monitor_device_log] lg
-          JOIN [dbo].[spiderweb_monitor_device_list] ls on lg.device_id = ls.id
-          where lg.update_at between CONVERT(DATETIME, '{report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{report_date2} 05:59:59', 120) 
-          and func_name = 'COUNTING DEVICE' and status_code_id = 'E01'
+        SELECT *
+        FROM [PMG_DEVICE].[dbo].[COUNTING_DATA] c, [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] m
+        where CreationTime between CONVERT(DATETIME, '{report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{report_date2} 05:59:59', 120)
+        and c.MachineName = m.counting_machine 
+        and qty2 > 1000
         """
-        rows = self.vnedc_db.select_sql_dict(sql)
+        rows = self.mes_db.select_sql_dict(sql)
 
         if len(rows) > 0:
             for row in rows:

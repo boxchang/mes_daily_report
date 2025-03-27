@@ -74,8 +74,11 @@ class mes_daily_report(object):
     )
 
     def __init__(self, report_date1, report_date2):
+
         self.report_date1 = report_date1
         self.report_date2 = report_date2
+        self.mes_db = mes_database()
+        self.mes_olap_db = mes_olap_database()
 
     def read_config(self, config_file):
         smtp_config = {}
@@ -253,12 +256,12 @@ class mes_daily_report(object):
 
     def is_special_date(self, date):
         result = False
-        mes_olap_db = mes_olap_database()
+
         sql = f"""
         SELECT CONTROL_DATE FROM [MES_OLAP].[dbo].[special_date] WHERE job_name = 'mes_daily_report'
         AND CONTROL_DATE = CONVERT(DATE, '{date}', 112)
         """
-        raws = mes_olap_db.select_sql_dict(sql)
+        raws = self.mes_olap_db.select_sql_dict(sql)
 
         if len(raws) > 0:
             result = True
@@ -266,7 +269,6 @@ class mes_daily_report(object):
         return result
 
     def get_df_fix(self, report_date1, report_date2):
-        db = mes_olap_database()
 
         sql = f"""
         SELECT WorkDate CountingDate, Machine Name, Line, Period, MinSpeed, MaxSpeed, AvgSpeed, CountingQty
@@ -274,7 +276,7 @@ class mes_daily_report(object):
           WorkDate between '{report_date1}' and '{report_date2}'
         """
 
-        raws = db.select_sql_dict(sql)
+        raws = self.mes_olap_db.select_sql_dict(sql)
         df = pd.DataFrame(raws)
 
         return df
@@ -287,8 +289,6 @@ class mes_daily_report(object):
 
         if self.is_special_date(report_date1):
             sys.exit()
-
-        db = mes_database()
 
         file_list = []
         error_list = []
@@ -314,9 +314,9 @@ class mes_daily_report(object):
                 file_name = f'MES_{plant}_DAILY_Report_{report_date1}.xlsx'
                 excel_file = os.path.join(save_path, file_name)
 
-                df_main = self.get_df_main(db, report_date1, report_date2, plant)
+                df_main = self.get_df_main(self.mes_db, report_date1, report_date2, plant)
 
-                df_detail = self.get_df_detail(db, report_date1, report_date2, plant)
+                df_detail = self.get_df_detail(self.mes_db, report_date1, report_date2, plant)
 
                 df_final = pd.merge(df_main, df_detail, on=['Name', 'Period', 'Line'], how='left')
 
@@ -340,7 +340,7 @@ class mes_daily_report(object):
                      'Target', 'Scrap', 'SecondGrade', 'OverControl', 'WeightValue', 'OpticalNGRate', 'WeightLower',
                      'WeightUpper', 'WoStartDate', 'WoEndDate', ]]
 
-                df_with_subtotals, df_chart, df_activation = self.sorting_data(db, df_selected)
+                df_with_subtotals, df_chart, df_activation = self.sorting_data(self.mes_db, df_selected)
 
                 with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
                     self.generate_summary_excel(writer, df_with_subtotals)
@@ -418,6 +418,7 @@ class mes_daily_report(object):
                         error_list.append(f"{device}點數機資料異常")
         error_msg = '<br>'.join(error_list)
         normal_msg = '<br>'.join(msg_list)
+        normal_msg = normal_msg + '<br>'
 
         if len(error_list) > 0:
             if not fix_mode:
@@ -448,15 +449,15 @@ class mes_daily_report(object):
     def isCountingError(self, report_date1, report_date2):
         result = False
         error_device = []
-        db = vnedc_database()
+
         sql = f"""
-        SELECT distinct device_group 
-          FROM [VNEDC].[dbo].[spiderweb_monitor_device_log] lg
-          JOIN [dbo].[spiderweb_monitor_device_list] ls on lg.device_id = ls.id
-          where lg.update_at between CONVERT(DATETIME, '{report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{report_date2} 05:59:59', 120) 
-          and func_name = 'COUNTING DEVICE' and status_code_id = 'E01'
+        SELECT *
+        FROM [PMG_DEVICE].[dbo].[COUNTING_DATA] c, [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] m
+        where CreationTime between CONVERT(DATETIME, '{report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{report_date2} 05:59:59', 120)
+        and c.MachineName = m.counting_machine 
+        and qty2 > 1000
         """
-        rows = db.select_sql_dict(sql)
+        rows = self.mes_db.select_sql_dict(sql)
 
         if len(rows) > 0:
             for row in rows:
@@ -468,7 +469,7 @@ class mes_daily_report(object):
         return result, error_device
 
     def delete_mes_olap(self, report_date1, report_date2, plant):
-        db = mes_olap_database()
+
         table_name = '[MES_OLAP].[dbo].[mes_daily_report_raw]'
         sql_delete = f"""
             delete
@@ -476,12 +477,12 @@ class mes_daily_report(object):
             WHERE Name like '%{plant}%' and ((date = '{report_date2}' AND period BETWEEN 0 AND 5)
             OR (date = '{report_date1}' AND period BETWEEN 6 AND 23))
         """
-        db.execute_sql(sql_delete)
+        self.mes_olap_db.execute_sql(sql_delete)
 
     def insert_mes_olap(self, df):
         try:
             df = df.replace({np.nan: 'null'})
-            db = mes_olap_database()
+
             table_name = '[MES_OLAP].[dbo].[mes_daily_report_raw]'
             for index, row in df.iterrows():
                 Date = row['Date']
@@ -525,7 +526,7 @@ class mes_daily_report(object):
                     '{ProductItem}','{AQL}',{ProductionTime},{Period},{max_speed},{min_speed},{avg_speed},{LineSpeedStd},
                     {sum_qty},'{Separate}',{Target},'{Scrap}','{SecondGrade}','{OverControl}',{WeightValue},{WeightLower},{WeightUpper}, {Activation}, GETDATE(),{SN},{ticket_qty},'{belong_to}', {OpticalNGRate}, {good_qty})"""
                     # print(sql)
-                    db.execute_sql(sql)
+                    self.mes_olap_db.execute_sql(sql)
         except Exception as e:
             print(e)
 
