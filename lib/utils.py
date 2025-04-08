@@ -5,6 +5,27 @@ from datetime import datetime, timedelta
 class Utils(object):
     week_range = 15
 
+    def get_week_data_df(self, vnedc_db, date):
+        year = ""
+        week_no = ""
+
+        sql = f"""
+            SELECT TOP (1) *
+              FROM [MES_OLAP].[dbo].[week_date]
+              WHERE CONVERT(DATETIME, '{date}', 121) >= start_date and CONVERT(DATETIME, '{date}', 121) <= end_date
+              AND enable = 1
+              ORDER BY year desc, month desc, month_week
+        """
+
+        print(sql)
+        rows = vnedc_db.select_sql_dict(sql)
+
+        if len(rows) > 0:
+            year = rows[0]["year"]
+            week_no = rows[0]["week_no"]
+
+        return year, week_no
+
     def get_week_date_df(self):
         vnedc_db = vnedc_database()
         date1 = datetime.now()
@@ -24,9 +45,8 @@ class Utils(object):
         df = pd.DataFrame(raws)
         return df
 
-    def get_week_date_dist(self):
+    def get_week_date_dist(self, vnedc_db):
         result = None
-        vnedc_db = vnedc_database()
         date1 = datetime.now()
         date2 = (date1 - timedelta(days=7)).strftime('%Y-%m-%d')
         date1 = date1.strftime('%Y-%m-%d')
