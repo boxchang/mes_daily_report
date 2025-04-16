@@ -10,7 +10,7 @@ import time
 from matplotlib.ticker import FuncFormatter
 import configparser
 import ast
-from factory import Factory
+from factory import Factory, DataControl, ColumnControl, ConfigObject, SetReportLog
 import numpy as np
 from openpyxl.utils import get_column_letter
 from database import mes_database, mes_olap_database, lkmes_database, lkmes_olap_database
@@ -21,188 +21,6 @@ from openpyxl.comments import Comment
 import matplotlib.pyplot as plt
 from io import BytesIO
 from datetime import datetime, timedelta, date
-
-
-class ConfigObject:
-    def read_config(self, config_file):
-        config = configparser.ConfigParser()
-        config.read(config_file, encoding='utf-8')
-
-        self.location = config['Settings'].get('location')
-        self.plants = config['Settings'].get('plants', '').split(',')
-        self.hour_output_limit = int(config['Settings'].get('hour_output_limit', 0))
-        self.fix_mode = config['Settings'].getboolean('fix_mode', False)
-        self.report_font = config['Settings'].get('report_font', 'Arial')
-
-    def read_mail_config(self, config_file):
-        self.smtp_config = {}
-        self.to_emails = []
-        self.admin_emails = []
-
-        current_section = None
-
-        with open(config_file, 'r') as file:
-            for line in file:
-                line = line.strip()
-
-                # Skip empty lines and comments
-                if not line or line.startswith('#'):
-                    continue
-
-                # Detect section headers
-                if line.startswith('[') and line.endswith(']'):
-                    current_section = line[1:-1].lower()
-                    continue
-
-                # Read lines based on the current section
-                if current_section == 'smtp':
-                    if '=' in line:
-                        key, value = line.split('=', 1)
-                        self.smtp_config[key.strip()] = value.strip()
-                elif current_section == 'recipients':
-                    self.to_emails.append(line)
-                elif current_section == 'admin_email':
-                    self.admin_emails.append(line)
-
-    def __init__(self, config_file, mail_config_file):
-        self.read_config(config_file)
-        self.read_mail_config(mail_config_file)
-
-
-class ColumnControl:
-    def __init__(self, name, align, format_style, header_name, font=None, hidden=False, width=None, data_type=None,
-                 comment=None, comment_width=None):
-        """
-        :param name: 欄位名稱 (str)
-        :param align: 對齊方式 ('left', 'center', 'right')
-        :param format_style: 格式設定，例如 '0.0%'、'#,##0' 等
-        :param header_name: 欄位的顯示名稱 (str)
-        :param font: openpyxl.styles.Font 物件 (可選)
-        :param hidden: 是否隱藏欄位 (bool)
-        :param width: 欄位寬度 (float)，如果為 None，則根據內容調整
-        :param data_type: 指定資料型別 (`str`, `int`, `float`...)，預設為 None
-        :param comment: 欄位的 Excel 註解 (str)，可選
-        :param comment_width: 註解的寬度 (int)，預設為 20
-        """
-        self.name = name
-        self.align = align.lower()
-        self.format_style = format_style
-        self.header_name = header_name
-        self.font = font if font else Font(name="Calibri", size=11)
-        self.hidden = hidden
-        self.width = width
-        self.data_type = data_type
-        self.comment = comment
-        self.comment_width = comment_width
-
-    def get_alignment(self):
-        """ 依據 align 設定對齊方式 """
-        alignments = {"center": "center", "right": "right", "left": "left"}
-        return Alignment(horizontal=alignments.get(self.align, "left"))
-
-    def apply_data_format(self, cell):
-        """ 套用字型、對齊、格式與註解 """
-        cell.font = self.font
-        cell.alignment = self.get_alignment()
-        cell.number_format = self.format_style  # 這行設定格式，例如 '@' 為文字
-        cell.value = self.convert_value(cell.value)
-
-    def convert_value(self, value):
-        """
-        依據指定的 data_type 轉換數值
-        """
-        if self.data_type and value is not None:
-            try:
-                return self.data_type(value)
-            except ValueError:
-                return value  # 如果轉換失敗，回傳原始值
-        return value
-
-    def __repr__(self):
-        return (f"ColumnControl(name='{self.name}', align='{self.align}', format_style='{self.format_style}', "
-                f"header_name='{self.header_name}', font={self.font}, hidden={self.hidden}, "
-                f"width={self.width}, data_type={self.data_type}, comment={self.comment})")
-
-
-class DataControl:
-    def __init__(self):
-        self.columns = []
-
-    def add(self, column):
-        if isinstance(column, ColumnControl):
-            self.columns.append(column)
-            self.header_font = Font(bold=True)
-            self.header_alignment = Alignment(horizontal='center')
-            self.header_border = Border(bottom=Side(style='thin'))
-        else:
-            raise TypeError("Only ColumnControl objects can be added.")
-
-    @property
-    def column_names(self):
-        """ 回傳所有欄位名稱 """
-        return [col.name for col in self.columns]
-
-    def apply_header_format(self, cell):
-        """對指定的 Excel 單元格應用標題樣式"""
-        cell.font = self.header_font
-        cell.alignment = self.header_alignment
-        cell.border = self.header_border
-
-    @property
-    def column_letter(self):
-        """
-        產生 {欄位名稱: Excel 欄位字母} 對應表
-        """
-        return {col.name: get_column_letter(i + 1) for i, col in enumerate(self.columns)}
-
-    @property
-    def column_index(self):
-        """
-        產生 {欄位名稱: Excel 欄位順序} 對應表
-        """
-        return {col.name: i for i, col in enumerate(self.columns)}
-
-    def __repr__(self):
-        return f"DataControl(columns={self.columns})"
-
-    @property
-    def header_columns(self):
-        """
-        產生 {欄位名稱: 顯示名稱} 對應表
-        """
-        return {col.name: col.header_name for col in self.columns}
-
-    def apply_formatting(self, worksheet):
-        """
-        將字型套用到 Excel Sheet 中的標題列
-        """
-        for i, col in enumerate(self.columns, start=1):  # Excel 欄位從 1 開始
-            col_letter = get_column_letter(i)
-            cell = worksheet.cell(row=1, column=i)
-            cell.font = col.font  # 套用字型
-            self.apply_header_format(cell)
-
-            if col.hidden:  # 隱藏欄位
-                worksheet.column_dimensions[col_letter].hidden = True
-
-            if col.width is not None:
-                worksheet.column_dimensions[col_letter].width = col.width  # 套用指定欄寬
-            else:
-                max_length = max(len(str(cell.value)) for cell in worksheet[col_letter][1:])
-                worksheet.column_dimensions[col_letter].width = max_length + 5
-
-            if col.comment:  # 如果有提供註解
-                comment = Comment(col.comment, "System")
-                comment.width = col.comment_width  # 設定註解寬度
-                cell.comment = comment
-
-        # 轉換數據型別
-        for row in worksheet.iter_rows(min_row=2, max_row=worksheet.max_row):
-            for col, cell in zip(self.columns, row):
-                col.apply_data_format(cell)
-
-    def __repr__(self):
-        return f"DataControl(columns={self.columns})"
 
 
 class mes_daily_report(object):
@@ -237,15 +55,17 @@ class mes_daily_report(object):
             self.mes_db = None
             self.mes_olap_db = None
 
-    def main(self):
-        logger = logging.getLogger('UNIQUE_NAME_HERE')
-        logging.getLogger()
-        logger.setLevel(logging.DEBUG)
-        stream_handler = logging.StreamHandler()
-        formatter = logging.Formatter('%(message)s')
-        stream_handler.setFormatter(formatter)
-        logger.addHandler(stream_handler)
+        # Save Path media/daily_output/
+        fold_name = self.report_date1
+        self.save_path = os.path.join("daily_output", fold_name)
 
+        # Check folder to create
+        if not os.path.exists(self.save_path):
+            os.makedirs(self.save_path)
+
+        SetReportLog()
+
+    def main(self):
         mes_db = self.mes_db
         mes_olap_db = self.mes_olap_db
         location = self.config.location
@@ -265,52 +85,45 @@ class mes_daily_report(object):
         file_list = []
         image_buffers = []
 
-        # Save Path media/daily_output/
-        save_path = os.path.join("daily_output")
-
-        # Check folder to create
-        if not os.path.exists(save_path):
-            os.makedirs(save_path)
-
         for plant in plants:
-            logger.info(f"{plant} start running......")
+            logging.info(f"{plant} start running......")
             dr = DailyReport(mes_db, mes_olap_db, location, plant, report_date1, report_date2, hour_output_limit,
-                             report_font, logger)
+                             report_font, logging)
 
-            logger.info(f"{plant} precheck......")
+            logging.info(f"{plant} precheck......")
             dr.Precheck()
 
-            logger.info(f"{plant} generate_main_df......")
+            logging.info(f"{plant} generate_main_df......")
             main_df, cosmetic_df = dr.generate_main_df()
 
-            logger.info(f"{plant} fix_main_df......")
+            logging.info(f"{plant} fix_main_df......")
             fixed_main_df = dr.fix_main_df(main_df)
 
-            logger.info(f"{plant} sorting_data......")
+            logging.info(f"{plant} sorting_data......")
             subtotals_df, chart_df, activation_df = dr.sorting_data(fixed_main_df, cosmetic_df)
 
-            logger.info(f"{plant} validate_data......")
+            logging.info(f"{plant} validate_data......")
             dr.validate_data(fixed_main_df, subtotals_df)
 
             # Generate Excel file
-            logger.info(f"{plant} generate_excel......")
+            logging.info(f"{plant} generate_excel......")
             file_name = f'MES_{location}_{plant}_DAILY_Report_{report_date1}.xlsx'
-            excel_file = os.path.join(save_path, file_name)
+            excel_file = os.path.join(self.save_path, file_name)
 
             dr.generate_excel(fixed_main_df, subtotals_df, activation_df, cosmetic_df, excel_file)
             if os.path.exists(excel_file):
                 file_list.append({'file_name': file_name, 'excel_file': excel_file})
 
             # Generate Chart
-            logger.info(f"{plant} generate_chart......")
+            logging.info(f"{plant} generate_chart......")
             image_file = f'MES_{location}_{plant}_bar_chart_{report_date1}.png'
-            image_file = os.path.join(save_path, image_file)
+            image_file = os.path.join(self.save_path, image_file)
 
-            image_buffer = dr.generate_chart(chart_df, image_file)
-            image_buffers.append(image_buffer)
+            dr.generate_chart(chart_df, image_file)
+            image_buffers.append(image_file)
 
         if not fix_mode:
-            logger.info(f"{location} send_email......")
+            logging.info(f"{location} send_email......")
             subject = f'[{location} Report] 產量日報表 {self.report_date1}'
             dr.send_email(self.config, subject, file_list, image_buffers, dr.msg_list, dr.error_list)
 
@@ -319,6 +132,24 @@ class DailyReport(Factory):
     file_list = []
     error_list = []
     msg_list = []
+
+    def Target_Setting(self, plant):
+        self.activation_target = 0.97
+        self.capacity_target = 0.97
+        self.yield_target = 0.97
+        self.oee_target = 0.95
+        self.isolation_target = 0.05
+        self.pinhole_target = 0.05
+        self.weight_target = 0.1
+        if 'NBR' in plant:
+            self.scrap_target = 0.009
+            self.faulty_target = 0.002
+            self.former_miss_target = 0.015
+        elif 'PVC' in plant:
+            self.scrap_target = 0.003
+            self.faulty_target = 0
+            self.former_miss_target = 0.001
+
 
     def __init__(self, mes_db, mes_olap_db, location, plant, report_date1, report_date2, hour_output_limit, report_font,
                  logger):
@@ -331,6 +162,8 @@ class DailyReport(Factory):
         self.mes_db = mes_db
         self.mes_olap_db = mes_olap_db
         self.logger = logger
+
+        self.Target_Setting(plant)
 
     def Precheck(self):
         start_time = time.time()
@@ -405,7 +238,8 @@ class DailyReport(Factory):
                     WorkOrderDate,
                     CustomerName,
                     w.ProductItem,
-                    nss.{upper_column} LineSpeedStd,
+                    nss.{lower_column} LineSpeedLower,
+                    nss.{upper_column} LineSpeedUpper,
                     m.COUNTING_MACHINE,
                     w.PartNo,
                     w.AQL,
@@ -460,15 +294,6 @@ class DailyReport(Factory):
                   where Cdt between CONVERT(DATETIME, '{report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{report_date2} 06:00:00', 120)
                   group by MES_MACHINE, LINE, CAST(DATEPART(hour, Cdt) AS INT)
             ),
-            GRM as (
-                SELECT  FORMAT(CreationTime, 'yyyy-MM-dd') AS WorkDate,CAST(DATEPART(hour, CreationTime) as INT) Period,
-                m.mes_machine Name,m.line Line,sum(Qty2) grm_qty
-                  FROM [PMG_DEVICE].[dbo].[PVC_GRM_DATA] d
-                  JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] m on d.MachineName = m.COUNTING_MACHINE 
-                  where CreationTime between CONVERT(DATETIME, '{report_date1} 06:00:00', 120) 
-                  and CONVERT(DATETIME, '{report_date2} 05:59:59', 120) 
-                  group by m.mes_machine,FORMAT(CreationTime, 'yyyy-MM-dd'),DATEPART(hour, CreationTime),m.line
-            ),
             Faulty as (
                 SELECT r.InspectionDate,r.Period,f.CreationTime,m.Name,f.ActualQty,f.DefectCode1,c.Descr,r.WorkOrderId,r.LineName,r.Id runcardId
                   FROM [PMGMES].[dbo].[PMG_MES_Faulty] f
@@ -519,21 +344,21 @@ class DailyReport(Factory):
                 wo.PlanQty,
                 wo.Qty,
                 wo.Status,
-                CAST(wo.LineSpeedStd AS FLOAT) AS LineSpeedStd,
+                CAST(wo.LineSpeedLower/pitch_rate AS INT) AS LineSpeedLower,
+                CAST(wo.LineSpeedUpper/pitch_rate AS INT) AS LineSpeedUpper,
                 60 AS ProductionTime,
                 hole_result Separate,
                 ISNULL(s.ActualQty, 0) Scrap,
                 ISNULL(f.ActualQty, 0) SecondGrade,
-                CAST(60 * wo.LineSpeedStd/pitch_rate AS INT) AS Target,
+                CAST(60 * wo.LineSpeedUpper/pitch_rate AS INT) AS Target,
                 weight_result OverControl,
                 CAST(round(weight_value,2) AS DECIMAL(10, 2)) WeightValue,
                 OpticalNGRate,
-                grm_qty,
                 CAST(round(weight_lower,2) AS DECIMAL(10, 2)) WeightLower,
                 CAST(round(weight_upper,2) AS DECIMAL(10, 2)) WeightUpper,
                 runcard,
                 wp.ActualQty WIP_Qty,
-                op.ActualQty Good_Qty,
+                op.ActualQty OnlinePacking,
                 t.ActualQty Ticket_Qty,
                 isn.ActualQty Isolation_Qty,
                 wo.StartDate WoStartDate, 
@@ -543,7 +368,6 @@ class DailyReport(Factory):
                 Machines mach
                 LEFT JOIN WorkOrderInfo wo ON mach.Name = wo.Name
                 LEFT JOIN Optical o ON wo.Name = o.MES_MACHINE AND wo.Line = o.LINE AND wo.Period = o.Period
-                LEFT JOIN GRM grm ON wo.Name = grm.Name AND wo.Line = grm.Line AND wo.Period = grm.Period
                 LEFT JOIN Faulty f ON wo.runcard = f.runcardId
                 LEFT JOIN Scrap s ON wo.runcard = s.runcardId
                 LEFT JOIN WIPPacking wp on wo.runcard = wp.RunCardId
@@ -675,11 +499,19 @@ class DailyReport(Factory):
         """
         weight_data = self.mes_olap_db.select_sql_dict(weight_sql)
         weight_df = pd.DataFrame(weight_data)
-
         weight_df = weight_df.pivot(index="runcard", columns="defect_code", values="qty").reset_index()
 
+        fixed_columns = ['runcard', '6100LL1', '6100LL2', '6200LL1', '6200LL2', '6300LL1', '6300LL2', '7000LL1', '7000LL2']
+
+        for col in fixed_columns:
+            if col not in weight_df.columns:
+                weight_df[col] = np.nan
+
+        # 按照 target_columns 的順序排列欄位
+        weight_df = weight_df[fixed_columns]
+
         cosmetic_sql = f"""
-         SELECT r.runcard, d.defect_code, sum(qty) cosmetic_sum_qty, max(cos.cosmetic_inspect_qty) cosmetic_inspect_qty
+         SELECT r.runcard, d.defect_code, sum(qty) cosmetic_qty,  max(cos.cosmetic_inspect_qty) cosmetic_inspect_qty
           FROM [MES_OLAP].[dbo].[counting_daily_info_raw] r
           LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_cosmetic_data] cos on r.Runcard = cos.runcard
           LEFT JOIN [MES_OLAP].[dbo].[mes_defect_define] d on d.defect_code = cos.defect_code
@@ -689,9 +521,12 @@ class DailyReport(Factory):
         cosmetic_data = self.mes_olap_db.select_sql_dict(cosmetic_sql)
         cosmetic_sample_df = pd.DataFrame(cosmetic_data)
 
-        inspect_qty_df = cosmetic_sample_df[['runcard', 'cosmetic_inspect_qty']].drop_duplicates()
-        cosmetic_pivot_df = cosmetic_sample_df.pivot(index="runcard", columns="defect_code",
-                                                     values="cosmetic_sum_qty").reset_index()
+        cosmetic_summary_df = cosmetic_sample_df.groupby('runcard', as_index=False).agg({
+                'cosmetic_qty': 'max',
+                'cosmetic_inspect_qty': 'max'
+            }).copy()
+        cosmetic_detail_df = cosmetic_sample_df.pivot(index="runcard", columns="defect_code",
+                                                     values="cosmetic_qty").reset_index().copy()
 
         # 計算針孔Defect Code加總
         pinhole_sql = f"""
@@ -725,10 +560,9 @@ class DailyReport(Factory):
             pinhole_sample_df['Pinhole_Sample'] = np.where(pinhole_sample_df['WO_AQL'] == '1.0', 50, 25)
 
         df = pd.merge(df, weight_df, on=['runcard'], how='left')
-        df = pd.merge(df, cosmetic_sample_df, on=['runcard'], how='left')
-        df = pd.merge(df, cosmetic_pivot_df, on=['runcard'], how='left')
+        df = pd.merge(df, cosmetic_summary_df, on=['runcard'], how='left')
         df = pd.merge(df, pinhole_pivot_df, on=['runcard'], how='left')
-        df = pd.merge(df, inspect_qty_df, on="runcard", how="left")
+        df = pd.merge(df, cosmetic_detail_df, on="runcard", how="left")
         df = pd.merge(df, pinhole_sample_df, on="runcard", how="left")
         df = df.fillna('')
 
@@ -743,9 +577,20 @@ class DailyReport(Factory):
 
         df_ipqc = self.get_df_ipqc()
 
+        df_dmf = self.get_dmf_rate()
+
+        df_lost_mold = self.get_lost_mold_rate()
+
         final_df = pd.merge(df_main, df_detail, on=['Name', 'Period', 'Line'], how='left')
 
         final_df = pd.merge(final_df, df_ipqc, on=['runcard'], how='left')
+
+        final_df = pd.merge(final_df, df_dmf, on=['Name', 'Period', 'Line'], how='left')
+
+        final_df = pd.merge(final_df, df_lost_mold, on=['Name', 'Period', 'Line'], how='left')
+
+        final_df['OverControlQty'] = final_df.apply(
+            lambda row: row['sum_qty'] if row['Weight_Status'] == 'NG' else 0, axis=1)
 
         cosmetic_df = self.get_df_cosmetic()
 
@@ -780,6 +625,13 @@ class DailyReport(Factory):
             main_df.loc[
                 main_df["CountingQty"].notna(), ["max_speed", "min_speed", "avg_speed", "sum_qty"]] = \
                 main_df.loc[main_df["CountingQty"].notna(), ["MaxSpeed", "MinSpeed", "AvgSpeed", "CountingQty"]].values
+
+        main_df['avg_speed'] = main_df['avg_speed'].fillna(0).round().astype('int')
+        main_df['LineSpeedLower'] = main_df['LineSpeedLower'].fillna(0).round().astype('int')
+        main_df['LineSpeedUpper'] = main_df['LineSpeedUpper'].fillna(0).round().astype('int')
+
+        main_df['Date'] = pd.to_datetime(main_df['Date'])
+        main_df['Date'] = main_df['Date'].dt.strftime('%Y/%m/%d')
 
         end_time = time.time()
         elapsed_time = end_time - start_time
@@ -818,6 +670,8 @@ class DailyReport(Factory):
 
         # Add Column Shift
         df['Shift'] = df['Period'].apply(shift)
+        cosmetic_df['Pinhole'] = pd.to_numeric(cosmetic_df['Pinhole'], errors='coerce').fillna(0)
+        cosmetic_df['Pinhole_Sample'] = pd.to_numeric(cosmetic_df['Pinhole_Sample'], errors='coerce').fillna(0)
 
         # 設定IPQC欄位判斷條件
         df['IPQC'] = df.apply(lambda row: "" if pd.isna(row['WorkOrderId']) or row['WorkOrderId'] == ""
@@ -837,6 +691,7 @@ class DailyReport(Factory):
         activation_rows = []
 
         for mach_name, mach_group in mach_grouped:
+            mach_cosmetic_dt = cosmetic_df[(cosmetic_df['Machine'] == mach_name)]
 
             # 處理停機情況
             if not mach_group['ProductItem'].iloc[0]:
@@ -849,14 +704,16 @@ class DailyReport(Factory):
                     'max_speed': '',
                     'min_speed': '',
                     'avg_speed': '',
-                    'LineSpeedStd': '',
+                    'LineSpeedLower': '',
+                    'LineSpeedUpper': '',
                     'ProductionTime': '',
                     'sum_qty': 0,
-                    'Good_Qty': 0,
+                    'OnlinePacking': 0,
                     'WIP_Qty': 0,
                     'Isolation_Qty': 0,
-                    'grm_qty': 0,
-                    'Separate': '',
+                    'DMF_Rate': 0,
+                    'Lost_Mold_Rate': 0,
+                    'PinholeRate': '',
                     'Scrap': '',
                     'SecondGrade': '',
                     'Target': 0,
@@ -869,13 +726,28 @@ class DailyReport(Factory):
             line_grouped = mach_group.groupby(['Shift', 'Line'])
 
             tmp_rows = []
-            for line_name, line_group in line_grouped:
-                line_sum_qty = line_group['sum_qty'].sum()
+            for (shift, line_name), line_group in line_grouped:
+
+                line_sum_qty = line_group['sum_qty'].sum() + line_group['Scrap'].sum() + line_group['SecondGrade'].sum()
                 line_secondGrade_qty = line_group['SecondGrade'].sum()
                 line_second_rate = round(float(line_secondGrade_qty) / line_sum_qty, 3) if line_sum_qty > 0 else 0
 
                 line_scrap_qty = line_group['Scrap'].sum()
                 line_scrap_rate = round(float(line_scrap_qty) / line_sum_qty, 3) if line_sum_qty > 0 else 0
+
+                line_over_control_qty = line_group['OverControlQty'].sum()
+                line_over_control_rate = round(float(line_over_control_qty) / line_sum_qty, 3) if line_sum_qty > 0 else 0
+
+                line_cosmetic_dt = mach_cosmetic_dt[(mach_cosmetic_dt['Shift'] == shift) &
+                                                    (mach_cosmetic_dt['Line'] == line_name)
+                                                    ]
+
+                line_pinhole_dpm = self.calculate_pinhole_dpm(line_group, line_cosmetic_dt)
+
+                try:
+                    line_pinhole_rate = round(line_pinhole_dpm / 1_000_000, 4)
+                except Exception as e:
+                    print(e)
 
                 line_sum = {
                     'Name': '',
@@ -886,18 +758,21 @@ class DailyReport(Factory):
                     'max_speed': line_group['max_speed'].max(),
                     'min_speed': line_group['min_speed'].min(),
                     'avg_speed': line_group['avg_speed'].mean(),
-                    'LineSpeedStd': join_values(line_group['LineSpeedStd']),
+                    'LineSpeedLower': join_values(line_group['LineSpeedLower']),
+                    'LineSpeedUpper': join_values(line_group['LineSpeedUpper']),
                     'ProductionTime': min2hour(line_group['ProductionTime']),
                     'sum_qty': line_group['sum_qty'].sum(),
-                    'Good_Qty': line_group['Good_Qty'].sum(),
+                    'OnlinePacking': line_group['OnlinePacking'].sum(),
                     'WIP_Qty': line_group['WIP_Qty'].sum(),
                     'Isolation_Qty': line_group['Isolation_Qty'].sum(),
-                    'grm_qty': line_group['grm_qty'].sum(),
-                    'Separate': counting_ng_ratio(line_group['Separate']),
+                    'DMF_Rate': line_group['DMF_Rate'].mean(),
+                    'Lost_Mold_Rate': line_group['Lost_Mold_Rate'].mean(),
+                    'PinholeRate': line_pinhole_rate,
                     'Scrap': line_scrap_rate,
                     'SecondGrade': line_second_rate,
                     'Target': line_group['Target'].sum(),
-                    'OverControl': counting_ng_ratio(line_group['OverControl']),
+                    'OverControl': line_over_control_rate,
+                    'Pinhole_DPM': line_pinhole_dpm,
                 }
                 line_sum_df = pd.DataFrame([line_sum])
 
@@ -920,18 +795,21 @@ class DailyReport(Factory):
                     'max_speed': day_df['max_speed'].max(),
                     'min_speed': day_df['min_speed'].min(),
                     'avg_speed': day_df['avg_speed'].mean(),
-                    'LineSpeedStd': join_values(day_df['LineSpeedStd']),
+                    'LineSpeedLower': join_values(day_df['LineSpeedLower']),
+                    'LineSpeedUpper': join_values(day_df['LineSpeedUpper']),
                     'ProductionTime': day_df['ProductionTime'].mean(),
                     'sum_qty': day_df['sum_qty'].sum(),
-                    'Good_Qty': day_df['Good_Qty'].sum(),
+                    'OnlinePacking': day_df['OnlinePacking'].sum(),
                     'WIP_Qty': day_df['WIP_Qty'].sum(),
                     'Isolation_Qty': day_df['Isolation_Qty'].sum(),
-                    'grm_qty': day_df['grm_qty'].sum(),
-                    'Separate': day_df['Separate'].mean(),
+                    'DMF_Rate': day_df['DMF_Rate'].mean(),
+                    'Lost_Mold_Rate': day_df['Lost_Mold_Rate'].mean(),
+                    'PinholeRate': round(day_df['Pinhole_DPM'].sum()/1_000_000, 4),
                     'Scrap': day_df['Scrap'].mean(),
                     'SecondGrade': day_df['SecondGrade'].mean(),
                     'Target': day_df['Target'].sum(),
                     'OverControl': day_df['OverControl'].mean(),
+                    'Pinhole_DPM': day_df['Pinhole_DPM'].sum(),
                 }
                 subtotal_df = pd.DataFrame([subtotal])
                 subtotal_df['avg_speed'] = subtotal_df['avg_speed'].round(0)
@@ -957,18 +835,21 @@ class DailyReport(Factory):
                     'max_speed': night_df['max_speed'].max(),
                     'min_speed': night_df['min_speed'].min(),
                     'avg_speed': night_df['avg_speed'].mean(),
-                    'LineSpeedStd': join_values(night_df['LineSpeedStd']),
+                    'LineSpeedLower': join_values(night_df['LineSpeedLower']),
+                    'LineSpeedUpper': join_values(night_df['LineSpeedUpper']),
                     'ProductionTime': night_df['ProductionTime'].mean(),
                     'sum_qty': night_df['sum_qty'].sum(),
-                    'Good_Qty': night_df['Good_Qty'].sum(),
+                    'OnlinePacking': night_df['OnlinePacking'].sum(),
                     'WIP_Qty': night_df['WIP_Qty'].sum(),
                     'Isolation_Qty': night_df['Isolation_Qty'].sum(),
-                    'grm_qty': night_df['grm_qty'].sum(),
-                    'Separate': night_df['Separate'].mean(),
+                    'DMF_Rate': night_df['DMF_Rate'].mean(),
+                    'Lost_Mold_Rate': night_df['Lost_Mold_Rate'].mean(),
+                    'PinholeRate': round(night_df['Pinhole_DPM'].sum()/1_000_000, 4),
                     'Scrap': night_df['Scrap'].mean(),
                     'SecondGrade': night_df['SecondGrade'].mean(),
                     'Target': night_df['Target'].sum(),
                     'OverControl': night_df['OverControl'].mean(),
+                    'Pinhole_DPM': night_df['Pinhole_DPM'].sum(),
                 }
                 subtotal_df = pd.DataFrame([subtotal])
                 subtotal_df['avg_speed'] = subtotal_df['avg_speed'].round(0)
@@ -990,7 +871,7 @@ class DailyReport(Factory):
             scrap_qty = mach_group['Scrap'].sum()
             second_qty = mach_group['SecondGrade'].sum()
             target = mach_group['Target'].sum()
-            online_qty = mach_group['Good_Qty'].sum()
+            online_qty = mach_group['OnlinePacking'].sum()
             isolation_qty = mach_group['Isolation_Qty'].sum()
 
             activation_rows.append(df_activation_row)
@@ -1006,8 +887,10 @@ class DailyReport(Factory):
 
             cosmetic_dpm = self.calculate_cosmetic_dpm(mach_group, cosmetic_df)
             pinhole_dpm = self.calculate_pinhole_dpm(mach_group, cosmetic_df)
-            mold_lost_rate = self.calculate_mold_lost_rate(mach_name)
-            dmf_rate = self.calculate_dmf_rate(mach_name)
+            pinhole_rate = round(pinhole_dpm / 1_000_000, 4)
+
+            over_control_qty = mach_group['OverControlQty'].sum()
+            over_control_rate = round(over_control_qty/tmp_qty, 2) if tmp_qty > 0 else 0
 
             subtotal = {
                 'Name': join_values(mach_group['Name']),
@@ -1018,18 +901,20 @@ class DailyReport(Factory):
                 'max_speed': mach_group['max_speed'].max(),
                 'min_speed': mach_group['min_speed'].min(),
                 'avg_speed': mach_group['avg_speed'].mean(),
-                'LineSpeedStd': join_values(mach_group['LineSpeedStd']),
+                'LineSpeedLower': join_values(mach_group['LineSpeedLower']),
+                'LineSpeedUpper': join_values(mach_group['LineSpeedUpper']),
                 'ProductionTime': day_production_time + night_production_time,
                 'sum_qty': sum_qty,
-                'Good_Qty': mach_group['Good_Qty'].sum(),
+                'OnlinePacking': mach_group['OnlinePacking'].sum(),
                 'WIP_Qty': mach_group['WIP_Qty'].sum(),
                 'Isolation_Qty': mach_group['Isolation_Qty'].sum(),
-                'grm_qty': mach_group['grm_qty'].sum(),
-                'Separate': counting_ng_ratio(mach_group['Separate']),
+                'DMF_Rate': mach_group['DMF_Rate'].mean(),  # 離型不良率
+                'Lost_Mold_Rate': mach_group['Lost_Mold_Rate'].mean(),  # 缺模率
+                'PinholeRate': pinhole_rate,
                 'Scrap': tmp_scrap,
                 'SecondGrade': tmp_second,
                 'Target': mach_group['Target'].sum(),
-                'OverControl': counting_ng_ratio(mach_group['OverControl']),
+                'OverControl': over_control_rate,
                 'Activation': activation_rate,
                 'Capacity': capacity_rate,
                 'Yield': yield_rate,
@@ -1038,8 +923,6 @@ class DailyReport(Factory):
                 'OpticalNGRate': mach_group['OpticalNGRate'].mean(),
                 'Cosmetic_DPM': cosmetic_dpm,
                 'Pinhole_DPM': pinhole_dpm,
-                'Mold_Lost_Rate': mold_lost_rate,  # 缺模率
-                'DMF_Rate': dmf_rate,  # 離型不良率
             }
             subtotal_df = pd.DataFrame([subtotal])
             subtotal_df['avg_speed'] = subtotal_df['avg_speed'].round(0)
@@ -1064,9 +947,9 @@ class DailyReport(Factory):
 
     def validate_data(self, fixed_main_df, subtotals_df):
         start_time = time.time()
-        # 檢查欄位 LineSpeedStd 是否有空值
+        # 檢查欄位 LineSpeedUpper 是否有空值
         df_filtered = fixed_main_df[fixed_main_df['Line'].notnull()]
-        isNoStandard = df_filtered['LineSpeedStd'].isnull().any()
+        isNoStandard = df_filtered['LineSpeedUpper'].isnull().any()
         if isNoStandard:
             self.error_list.append(f"有品項尚未維護標準值，無法計算目標產量")
 
@@ -1108,49 +991,55 @@ class DailyReport(Factory):
         elapsed_time = end_time - start_time
         self.logger.info(f"Time taken: {elapsed_time:.2f} seconds.")
 
+    # @Summary
     def generate_summary_excel(self, writer, df):
         # region 1. Column Define
         font = Font(name=self.report_font, size=10, bold=False)
         sheet = DataControl()
-        sheet.add(ColumnControl('Name', 'center', '@', '機台號', font, hidden=False, width=18))
+        sheet.add(ColumnControl('Name', 'center', '@', '機台號', font, hidden=False, width=19))
         sheet.add(ColumnControl('ProductItem', 'left', '@', '品項', font, hidden=False, width=30))
         sheet.add(ColumnControl('AQL', 'center', '@', 'AQL', font, hidden=False, width=9))
         sheet.add(ColumnControl('Shift', 'center', '@', '班別', font, hidden=False, width=9))
         sheet.add(ColumnControl('Line', 'center', '@', '線別', font, hidden=False, width=17))
-        sheet.add(ColumnControl('max_speed', 'right', '0', '車速(最高)', font, hidden=False, width=10))
-        sheet.add(ColumnControl('min_speed', 'right', '0', '車速(最低)', font, hidden=False, width=10))
-        sheet.add(ColumnControl('avg_speed', 'right', '0', '車速(平均)', font, hidden=False, width=10))
-        sheet.add(ColumnControl('LineSpeedStd', 'right', '0', '標準車速', font, hidden=False, width=10,
-                                comment="標準車速上限", comment_width=200))
+        sheet.add(ColumnControl('avg_speed', 'right', '0', '平均車速', font, hidden=False, width=10, data_type=int, group="AVG_SPEED",
+                                comment="車速標準下限~車速標準上限+2%", comment_width=300))
+        sheet.add(ColumnControl('LineSpeedLower', 'right', '0', '標準車速下限', font, hidden=True, width=10, data_type=int,
+                                comment="車速標準下限", comment_width=200))
+        sheet.add(ColumnControl('LineSpeedUpper', 'right', '0', '標準車速上限', font, hidden=True, width=10, data_type=int,
+                                comment="車速標準上限", comment_width=200))
         sheet.add(ColumnControl('ProductionTime', 'center', '@', '生產時間', font, hidden=False, width=10.5))
-        sheet.add(ColumnControl('sum_qty', 'right', '#,##0', '產量(加總)', font, hidden=False, width=12,
+        sheet.add(ColumnControl('sum_qty', 'right', '#,##0', '生產總量', font, hidden=False, width=14,
                                 comment="點數機數量", comment_width=200))
-        sheet.add(ColumnControl('Good_Qty', 'right', '#,##0', '包裝確認量', font, hidden=False, width=12))
-        sheet.add(ColumnControl('WIP_Qty', 'right', '#,##0', '半成品數量', font, hidden=False, width=12))
-        sheet.add(ColumnControl('Isolation_Qty', 'right', '#,##0', '隔離品數量', font, hidden=False, width=12))
-        sheet.add(ColumnControl('grm_qty', 'right', '#,##0', '離型不良數量', font, hidden=True, width=12))
-        sheet.add(ColumnControl('Separate', 'right', '0.00%', '針孔', font, hidden=False, width=10))
-        sheet.add(ColumnControl('Scrap', 'right', '0.00%', '廢品', font, hidden=False, width=10,
-                                comment="廢品數量/產量", comment_width=200))
-        sheet.add(ColumnControl('SecondGrade', 'right', '0.00%', '二級品', font, hidden=False, width=10,
-                                comment="二級品數量/產量", comment_width=200))
-        sheet.add(ColumnControl('Target', 'right', '#,##0', '目標產能', font, hidden=False, width=10))
-        sheet.add(ColumnControl('OverControl', 'right', '0.00%', '超內控', font, hidden=False, width=10))
-        sheet.add(ColumnControl('Activation', 'right', '0.00%', '稼動率', font, hidden=True, width=10,
+        sheet.add(ColumnControl('OnlinePacking', 'right', '#,##0', '包裝確認量', font, hidden=False, width=14))
+        sheet.add(ColumnControl('WIP_Qty', 'right', '#,##0', '半成品入庫量', font, hidden=False, width=14))
+        sheet.add(ColumnControl('Target', 'right', '#,##0', '目標產能', font, hidden=False, width=14,
+                                comment="生產時間(IPQC) * (標準車速上限/節距調整值)", comment_width=600))
+        sheet.add(ColumnControl('Activation', 'right', '0.00%', f'稼動率≥ {self.activation_target*100:g}%', font, hidden=True, width=12, limit=[None, self.activation_target],
                                 comment="點數機(A1B1)生產時間 / 工單預計生產時間"))
-        sheet.add(ColumnControl('Capacity', 'right', '0.00%', '產能效率', font, hidden=False, width=10,
+        sheet.add(ColumnControl('Capacity', 'right', '0.00%', f'產能效率≥ {self.capacity_target*100:g}%', font, hidden=False, width=12, limit=[None, self.capacity_target],
                                 comment="(點數機數量+二級品數量+廢品數量) / 目標產能"))
-        sheet.add(ColumnControl('Yield', 'right', '0.00%', '良率', font, hidden=False, width=10,
+        sheet.add(ColumnControl('Yield', 'right', '0.00%', f'良率≥ {self.yield_target*100:g}%', font, hidden=False, width=10, limit=[None, self.yield_target],
                                 comment="(包裝確認量-隔離品數量) / (點數機數量+二級品數量+廢品數量)"))
-        sheet.add(ColumnControl('OEE', 'right', '0.00%', 'OEE', font, hidden=True, width=10,
+        sheet.add(ColumnControl('OEE', 'right', '0.00%', f'OEE≥ {self.oee_target*100:g}%', font, hidden=True, width=10, limit=[None, self.oee_target],
                                 comment="稼動率 x 產能效率 x 良率"))
-        sheet.add(ColumnControl('Isolation', 'right', '0.00%', '隔離品率', font, hidden=False, width=10,
+        sheet.add(ColumnControl('Isolation_Qty', 'right', '#,##0', '隔離品數量', font, hidden=False, width=13,
+                                comment="MES輸入的隔離品數量", comment_width=300))
+        sheet.add(ColumnControl('Isolation', 'right', '0.00%', f'隔離品率≤ {round(self.isolation_target*100,2):g}%', font, hidden=False, width=13, limit=[self.isolation_target, None],
                                 comment="隔離品數量 / 包裝確認量"))
-        sheet.add(ColumnControl('OpticalNGRate', 'center', '0.00%', '光檢不良率', font, hidden=False, width=10))
+
+        sheet.add(ColumnControl('PinholeRate', 'right', '0.00%', f'美醫針孔不良率≤ {round(self.pinhole_target*100,2):g}%', font, hidden=False, width=17, limit=[self.pinhole_target, None]))
+        sheet.add(ColumnControl('Scrap', 'right', '0.00%', f'廢品≤ {round(self.scrap_target*100,2):g}%', font, hidden=False, width=13, limit=[self.scrap_target, None],
+                                comment="廢品數量/產量", comment_width=200))
+        sheet.add(ColumnControl('SecondGrade', 'right', '0.00%', f'二級品≤ {round(self.faulty_target*100,2):g}%', font, hidden=False, width=13, limit=[self.faulty_target, None],
+                                comment="二級品數量/產量", comment_width=200))
+
+        sheet.add(ColumnControl('OverControl', 'right', '0.00%', f'超內控≤ {round(self.weight_target*100,2):g}%', font, hidden=False, width=13, limit=[self.weight_target, None]))
+        sheet.add(ColumnControl('Lost_Mold_Rate', 'center', '0.00%', f'缺模率≤ {round(self.former_miss_target*100,2):g}%', font,
+                          hidden=True, width=13, limit=[self.former_miss_target, None]))
+        sheet.add(ColumnControl('OpticalNGRate', 'center', '0.00%', '光檢不良率', font, hidden=False, width=15))
+        sheet.add(ColumnControl('DMF_Rate', 'center', '0.00%', '離型不良率', font, hidden=True, width=13))
         sheet.add(ColumnControl('Cosmetic_DPM', 'right', '#,##0', '外觀DPM', font, hidden=False, width=10))
         sheet.add(ColumnControl('Pinhole_DPM', 'right', '#,##0', '針孔DPM', font, hidden=False, width=10))
-        sheet.add(ColumnControl('Mold_Lost_Rate', 'center', '0.00%', '缺模率', font, hidden=True, width=10))
-        sheet.add(ColumnControl('DMF_Rate', 'center', '0.00%', '離型不良率', font, hidden=True, width=10))
 
         column_index = sheet.column_index
         column_letter = sheet.column_letter
@@ -1175,7 +1064,7 @@ class DailyReport(Factory):
         sheet.apply_formatting(worksheet)
 
         # Freeze the first row
-        worksheet.freeze_panes = worksheet['A2']
+        worksheet.freeze_panes = worksheet['F2']
         # endregion
 
         # region 3. Customize
@@ -1222,16 +1111,14 @@ class DailyReport(Factory):
             # 設置欄的 outlineLevel 讓其可以折疊/展開
             worksheet.column_dimensions[column_letter['Shift']].outlineLevel = 1
             worksheet.column_dimensions[column_letter['Line']].outlineLevel = 1
-            worksheet.column_dimensions[column_letter['max_speed']].outlineLevel = 1
-            worksheet.column_dimensions[column_letter['min_speed']].outlineLevel = 1
 
             # 總共折疊的區域
-            worksheet.column_dimensions.group(column_letter['Shift'], column_letter['min_speed'], hidden=True)
+            worksheet.column_dimensions.group(column_letter['Shift'], column_letter['Line'], hidden=True)
         # endregion
 
         return workbook
 
-    def generate_machine_excel(self, writer, df, plant, machine_name):
+    def generate_machine_excel(self, writer, df, machine_name):
         # region 1. Column Define
         font = Font(name=self.report_font, size=10, bold=False)
         sheet = DataControl()
@@ -1252,57 +1139,56 @@ class DailyReport(Factory):
         sheet.add(ColumnControl('max_speed', 'right', '0', '車速(最高)', font, hidden=False, width=9.5))
         sheet.add(ColumnControl('min_speed', 'right', '0', '車速(最低)', font, hidden=False, width=9.5))
         sheet.add(ColumnControl('avg_speed', 'right', '0', '車速(平均)', font, hidden=False, width=9.5))
-        sheet.add(ColumnControl('LineSpeedStd', 'right', '0', '標準車速', font, hidden=False, width=9.5))
+        sheet.add(ColumnControl('LineSpeedLower', 'right', '0', '標準下限', font, hidden=False, width=9.5))
+        sheet.add(ColumnControl('LineSpeedUpper', 'right', '0', '標準上限', font, hidden=False, width=9.5))
         sheet.add(ColumnControl('sum_qty', 'right', '#,##0', '產量(加總)', font, hidden=False, width=11))
+        sheet.add(ColumnControl('OnlinePacking', 'right', '#,##0', '包裝確認量', font, hidden=False, width=11))
         sheet.add(ColumnControl('WIP_Qty', 'right', '#,##0', '半成品入庫量', font, hidden=False, width=11))
-        sheet.add(ColumnControl('Good_Qty', 'right', '#,##0', '包裝確認量', font, hidden=False, width=11))
         sheet.add(ColumnControl('Separate', 'center', '@', '針孔', font, hidden=False, width=9))
         sheet.add(ColumnControl('Target', 'center', '#,##0', '目標產能', font, hidden=False, width=11,
-                                comment="60 * (標準車速上限/節距調整值)"))
-        sheet.add(ColumnControl('Scrap', 'center', '0', '廢品', font, hidden=False, width=11))
-        sheet.add(ColumnControl('SecondGrade', 'center', '0', '二級品', font, hidden=False, width=11))
-        sheet.add(ColumnControl('Isolation_Qty', 'center', '0', '隔離品', font, hidden=True, width=11))
-        sheet.add(ColumnControl('grm_qty', 'right', '#,##0', '離型不良數量', font, hidden=True, width=12))
+                                comment="有IPQC的機台運作分鐘數 * (標準車速上限/節距調整值)"))
+        sheet.add(ColumnControl('Scrap', 'right', '#,##0', '廢品', font, hidden=False, width=11))
+        sheet.add(ColumnControl('SecondGrade', 'right', '#,##0', '二級品', font, hidden=False, width=11))
+        sheet.add(ColumnControl('Isolation_Qty', 'right', '#,##0', '隔離品數量', font, hidden=False, width=11))
+        sheet.add(ColumnControl('DMF_Rate', 'right', '0.00%', '離型不良率', font, hidden=True, width=12))
+        sheet.add(ColumnControl('Lost_Mold_Rate', 'right', '0.00%', '缺模率', font, hidden=True, width=12))
         sheet.add(ColumnControl('OverControl', 'center', '@', '超內控', font, hidden=False, width=9))
-        sheet.add(
-            ColumnControl('WeightValue', 'center', '0.00', 'IPQC克重', font, hidden=False, width=11, data_type=float))
+        sheet.add(ColumnControl('WeightValue', 'center', '0.00', 'IPQC克重', font, hidden=False, width=11, data_type=float))
         sheet.add(ColumnControl('OpticalNGRate', 'center', '0.00%', '光檢不良率', font, hidden=False, width=10))
-        sheet.add(ColumnControl('WeightLower', 'center', '0.00', '重量上限', font, hidden=True, width=11))
-        sheet.add(ColumnControl('WeightUpper', 'center', '0.00', '重量下限', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Tensile_Value', 'center', '0.00', '抗拉強度值', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Tensile_Limit', 'center', '@', '抗拉強度上下限', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Tensile_Status', 'center', '@', '抗拉強度結果', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Elongation_Value', 'center', '0.00', '伸長率值', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Elongation_Limit', 'center', '@', '伸長率上下限', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Elongation_Status', 'center', '@', '伸長率結果', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Roll_Value', 'center', '0.00', '卷唇厚度值', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Roll_Limit', 'center', '@', '卷唇厚度上下限', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Roll_Status', 'center', '@', '卷唇厚度結果', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Cuff_Value', 'center', '0.00', '袖厚度值', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Cuff_Limit', 'center', '@', '袖厚度上下限', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Cuff_Status', 'center', '@', '袖厚度結果', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Palm_Value', 'center', '0.00', '掌厚度值', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Palm_Limit', 'center', '@', '掌厚度上下限', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Palm_Status', 'center', '@', '掌厚度結果', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Finger_Value', 'center', '0.00', '指厚度值', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Finger_Limit', 'center', '@', '指厚度上下限', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Finger_Status', 'center', '@', '指厚度結果', font, hidden=True, width=11))
-        sheet.add(ColumnControl('FingerTip_Value', 'center', '0.00', '指尖厚度值', font, hidden=True, width=11))
-        sheet.add(ColumnControl('FingerTip_Limit', 'center', '@', '指尖厚度上下限', font, hidden=True, width=11))
-        sheet.add(ColumnControl('FingerTip_Status', 'center', '@', '指尖厚度結果', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Length_Value', 'center', '0.00', '長度值', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Length_Limit', 'center', '@', '長度上下限', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Length_Status', 'center', '@', '長度結果', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Weight_Value', 'center', '0.00', '重量值', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Weight_Limit', 'center', '@', '重量上下限', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Weight_Light', 'center', '@', '超輕檢驗', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Weight_Heavy', 'center', '@', '超重檢驗', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Width_Value', 'center', '0.00', '寬度值', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Width_Limit', 'center', '@', '寬度上下限', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Width_Status', 'center', '@', '寬度結果', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Pinhole_Value', 'center', '0.00', '針孔值', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Pinhole_Limit', 'center', '@', '針孔上下限', font, hidden=True, width=11))
-        sheet.add(ColumnControl('Pinhole_Status', 'center', '@', '針孔結果', font, hidden=True, width=11))
+        sheet.add(ColumnControl('Tensile_Value', 'center', '0.00', '抗拉強度值', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Tensile_Limit', 'center', '@', '抗拉強度上下限', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Tensile_Status', 'center', '@', '抗拉強度結果', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Elongation_Value', 'center', '0.00', '伸長率值', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Elongation_Limit', 'center', '@', '伸長率上下限', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Elongation_Status', 'center', '@', '伸長率結果', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Roll_Value', 'center', '0.00', '卷唇厚度值', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Roll_Limit', 'center', '@', '卷唇厚度上下限', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Roll_Status', 'center', '@', '卷唇厚度結果', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Cuff_Value', 'center', '0.00', '袖厚度值', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Cuff_Limit', 'center', '@', '袖厚度上下限', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Cuff_Status', 'center', '@', '袖厚度結果', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Palm_Value', 'center', '0.00', '掌厚度值', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Palm_Limit', 'center', '@', '掌厚度上下限', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Palm_Status', 'center', '@', '掌厚度結果', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Finger_Value', 'center', '0.00', '指厚度值', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Finger_Limit', 'center', '@', '指厚度上下限', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Finger_Status', 'center', '@', '指厚度結果', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('FingerTip_Value', 'center', '0.00', '指尖厚度值', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('FingerTip_Limit', 'center', '@', '指尖厚度上下限', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('FingerTip_Status', 'center', '@', '指尖厚度結果', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Length_Value', 'center', '0.00', '長度值', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Length_Limit', 'center', '@', '長度上下限', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Length_Status', 'center', '@', '長度結果', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Weight_Value', 'center', '0.00', '重量值', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Weight_Limit', 'center', '@', '重量上下限', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Weight_Light', 'center', '@', '超輕檢驗', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Weight_Heavy', 'center', '@', '超重檢驗', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Width_Value', 'center', '0.00', '寬度值', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Width_Limit', 'center', '@', '寬度上下限', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Width_Status', 'center', '@', '寬度結果', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Pinhole_Value', 'center', '0.00', '針孔值', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Pinhole_Limit', 'center', '@', '針孔上下限', font, hidden=True, width=11, level=1))
+        sheet.add(ColumnControl('Pinhole_Status', 'center', '@', '針孔結果', font, hidden=True, width=11, level=1))
         sheet.add(ColumnControl('IPQC', 'center', '@', 'IPQC', font, hidden=False, width=11))
         sheet.add(ColumnControl('WoStartDate', 'center', 'yyyy/mm/dd hh:mm:ss', '工單開始時間', font, hidden=True, width=11))
         sheet.add(ColumnControl('WoEndDate', 'center', 'yyyy/mm/dd hh:mm:ss', '工單結束時間', font, hidden=True, width=11))
@@ -1331,34 +1217,14 @@ class DailyReport(Factory):
         worksheet = writer.sheets[namesheet]
 
         # Freeze the first row
-        worksheet.freeze_panes = worksheet['A2']
+        worksheet.freeze_panes = worksheet['H2']
 
         sheet.apply_formatting(worksheet)
         # endregion
 
         # region 3. Customize
-        # # 設置欄的 outlineLevel 讓其可以折疊/展開
-        hide_columns = ['Tensile_Value', 'Tensile_Limit', 'Tensile_Status', 'Elongation_Value', 'Elongation_Limit',
-                        'Elongation_Status',
-                        'Roll_Value', 'Roll_Limit', 'Roll_Status', 'Cuff_Value', 'Cuff_Limit', 'Cuff_Status',
-                        'Palm_Value', 'Palm_Limit', 'Palm_Status',
-                        'Finger_Value', 'Finger_Limit', 'Finger_Status', 'FingerTip_Value', 'FingerTip_Limit',
-                        'FingerTip_Status',
-                        'Length_Value', 'Length_Limit', 'Length_Status', 'Weight_Value', 'Weight_Limit', 'Weight_Light',
-                        'Weight_Heavy',
-                        'Width_Value', 'Width_Limit', 'Width_Status',
-                        'Pinhole_Value', 'Pinhole_Limit', 'Pinhole_Status']
-        for column in hide_columns:
-            worksheet.column_dimensions[column_letter[column]].outlineLevel = 1
+        # # 設置欄讓其可以折疊/展開
         worksheet.column_dimensions.group(column_letter['Tensile_Value'], column_letter['Pinhole_Status'], hidden=True)
-
-        hide_columns = ['Roll_Value', 'Roll_Limit', 'Roll_Status', 'Cuff_Value', 'Cuff_Limit', 'Cuff_Status',
-                        'Palm_Value', 'Palm_Limit', 'Palm_Status',
-                        'Finger_Value', 'Finger_Limit', 'Finger_Status', 'FingerTip_Value', 'FingerTip_Limit',
-                        'FingerTip_Status']
-        for column in hide_columns:
-            worksheet.column_dimensions[column_letter[column]].outlineLevel = 2
-        worksheet.column_dimensions.group(column_letter['Roll_Value'], column_letter['FingerTip_Status'], hidden=True)
 
         for row in range(2, worksheet.max_row + 1):  # 從第2行開始，因為第1行是標題
             weight_value_cell = worksheet[column_letter['WeightValue'] + str(row)]
@@ -1426,89 +1292,107 @@ class DailyReport(Factory):
 
         return workbook
 
-    def generate_cosmetic_excel(self, writer, df):
+    def generate_cosmetic_excel(self, writer, cosmetic_df):
         # region 1. Column Define
         font = Font(name=self.report_font, size=10, bold=False)
         sheet = DataControl()
         sheet.add(ColumnControl('runcard', 'center', '@', 'Runcard', font, hidden=False, width=14))
         sheet.add(ColumnControl('belong_to', 'center', '@', '作業日期', font, hidden=False, width=14))
-        sheet.add(ColumnControl('Machine', 'center', '@', '機台', font, hidden=False))
-        sheet.add(ColumnControl('Line', 'center', '@', '線別', font, hidden=False))
-        sheet.add(ColumnControl('Shift', 'center', '@', '班別', font, hidden=False))
-        sheet.add(ColumnControl('WorkOrder', 'center', '@', '工單', font, hidden=False))
+        sheet.add(ColumnControl('Machine', 'center', '@', '機台', font, hidden=False, width=18))
+        sheet.add(ColumnControl('Line', 'right', '@', '線別', font, hidden=False, width=8))
+        sheet.add(ColumnControl('Shift', 'right', '@', '班別', font, hidden=False, width=8))
+        sheet.add(ColumnControl('WorkOrder', 'center', '@', '工單', font, hidden=False, width=16))
         sheet.add(ColumnControl('PartNo', 'center', '@', '料號', font, hidden=False, width=14))
-        sheet.add(ColumnControl('ProductItem', 'center', '@', '品項', font, hidden=False, width=20))
-        sheet.add(ColumnControl('SalePlaceCode', 'center', '@', '銷售地點', font, hidden=False, width=14))
-        sheet.add(ColumnControl('Period', 'center', '0', 'Period', font, hidden=False, width=14))
-        sheet.add(ColumnControl('6100LL1', 'center', '0', '美線過重', font, hidden=False, width=14))
-        sheet.add(ColumnControl('6100LL2', 'center', '0', '美線過輕', font, hidden=False, width=14))
-        sheet.add(ColumnControl('6200LL1', 'center', '0', '歐線過重', font, hidden=False, width=14))
-        sheet.add(ColumnControl('6200LL2', 'center', '0', '歐線過輕', font, hidden=False, width=14))
-        sheet.add(ColumnControl('6300LL1', 'center', '0', '日線過重', font, hidden=False, width=14))
-        sheet.add(ColumnControl('6300LL2', 'center', '0', '日線過輕', font, hidden=False, width=14))
-        sheet.add(ColumnControl('7000LL1', 'center', '0', 'OBM過重', font, hidden=False, width=14))
-        sheet.add(ColumnControl('7000LL2', 'center', '0', 'OBM過輕', font, hidden=False, width=14))
+        sheet.add(ColumnControl('ProductItem', 'center', '@', '品項', font, hidden=False, width=28))
+        sheet.add(ColumnControl('SalePlaceCode', 'center', '@', '銷售地點', font, hidden=False, width=8))
+        sheet.add(ColumnControl('Period', 'center', '@', '', font, hidden=False, width=10))
+        sheet.add(ColumnControl('6100LL1', 'center', '0', '美線過重', font, hidden=False, width=14, group='WEIGHT',
+                                apply_format=False))
+        sheet.add(ColumnControl('6100LL2', 'center', '0', '美線過輕', font, hidden=False, width=14, group='WEIGHT',
+                                apply_format=False))
+        sheet.add(ColumnControl('6200LL1', 'center', '0', '歐線過重', font, hidden=False, width=14, group='WEIGHT',
+                                apply_format=False))
+        sheet.add(ColumnControl('6200LL2', 'center', '0', '歐線過輕', font, hidden=False, width=14, group='WEIGHT',
+                                apply_format=False))
+        sheet.add(ColumnControl('6300LL1', 'center', '0', '日線過重', font, hidden=False, width=14, group='WEIGHT',
+                                apply_format=False))
+        sheet.add(ColumnControl('6300LL2', 'center', '0', '日線過輕', font, hidden=False, width=14, group='WEIGHT',
+                                apply_format=False))
+        sheet.add(ColumnControl('7000LL1', 'center', '0', 'OBM過重', font, hidden=False, width=14, group='WEIGHT',
+                                apply_format=False))
+        sheet.add(ColumnControl('7000LL2', 'center', '0', 'OBM過輕', font, hidden=False, width=14, group='WEIGHT',
+                                apply_format=False))
 
-        sql = """
-          SELECT *
-          FROM [MES_OLAP].[dbo].[mes_defect_define]
-          where defect_type = 'COSMETIC'
-          order by defect_level, defect_code
-        """
-        rows = self.mes_olap_db.select_sql_dict(sql)
-        for row in rows:
+        sql = f"""
+                          SELECT distinct d.defect_level, d.defect_code, d.defect_code, d.desc1, d.desc2
+                            FROM [MES_OLAP].[dbo].[counting_daily_info_raw] r
+                            LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_cosmetic_data] cos on r.Runcard = cos.runcard
+                            LEFT JOIN [MES_OLAP].[dbo].[mes_defect_define] d on d.defect_code = cos.defect_code
+                            where r.belong_to = '{self.report_date1}' and d.defect_type <> ''
+                            order by d.defect_level, d.defect_code
+                        """
+        cosmetic_rows = self.mes_olap_db.select_sql_dict(sql)
+
+        critical_defect = []
+        major_defect = []
+        minor_defect = []
+        defect_list = {'CRITICAL': critical_defect, 'MAJOR': major_defect, 'MINOR': minor_defect}
+
+        for row in cosmetic_rows:
+            defect_list[row['defect_level']].append(row['defect_code'])
             desc = row['desc1'] if row['desc1'] != '' else row['desc2']
-            sheet.add(ColumnControl(row['defect_code'], 'center', '0', desc, font, hidden=False, width=14))
+            sheet.add(ColumnControl(row['defect_code'], 'center', '0', desc, font, hidden=False, width=14,
+                                    group=row['defect_level'], apply_format=False))
 
-        sheet.add(ColumnControl('cosmetic_inspect_qty_x', 'right', '0', '外觀檢查數量', font, hidden=False, width=14))
+        sheet.add(ColumnControl('cosmetic_qty', 'right', '#,##0', '缺陷手套數量', font, hidden=False, width=14, group='COSMETIC',
+                                apply_format=False))
+        sheet.add(ColumnControl('cosmetic_inspect_qty', 'right', '#,##0', '外觀檢查數量', font, hidden=False, width=14, group='COSMETIC',
+                                apply_format=False))
 
-        sql = """
-                  SELECT *
-                  FROM [MES_OLAP].[dbo].[mes_defect_define]
-                  where defect_type = 'PINHOLE'
-                  order by defect_level, defect_code
-                """
-        rows = self.mes_olap_db.select_sql_dict(sql)
-        for row in rows:
+        sql = f"""
+                        SELECT distinct d.defect_code, d.desc1, d.desc2
+                          FROM [MES_OLAP].[dbo].[counting_daily_info_raw] r
+                          JOIN [MES_OLAP].[dbo].[mes_ipqc_pinhole_data] cos on r.Runcard = cos.runcard
+                          JOIN [MES_OLAP].[dbo].[mes_defect_define] d on d.defect_code = cos.defect_code
+                          where r.belong_to = '{self.report_date1}'
+                          order by d.defect_code
+                                """
+        pinhole_rows = self.mes_olap_db.select_sql_dict(sql)
+
+        pinhole_defect = []
+        defect_list['PINHOLE'] = pinhole_defect
+
+        for row in pinhole_rows:
+            defect_list['PINHOLE'].append(row['defect_code'])
             desc = row['desc1'] if row['desc1'] != '' else row['desc2']
-            sheet.add(ColumnControl(row['defect_code'], 'center', '0', desc, font, hidden=False, width=14))
+            sheet.add(
+                ColumnControl(row['defect_code'], 'center', '0', desc, font, hidden=False, width=14, group='COSMETIC',
+                              apply_format=False))
 
-        sheet.add(ColumnControl('Pinhole', 'right', '0', '針孔數量', font, hidden=False, width=14))
-        sheet.add(ColumnControl('Pinhole_Sample', 'right', '0', '針孔檢查數量', font, hidden=False, width=14))
+        sheet.add(ColumnControl('Pinhole', 'right', '0', '針孔數量', font, hidden=False, width=14, group='COSMETIC',
+                                apply_format=False))
+        sheet.add(
+            ColumnControl('Pinhole_Sample', 'right', '0', '針孔檢查數量', font, hidden=False, width=14, group='COSMETIC',
+                          apply_format=False))
 
         header_columns = sheet.header_columns
         column_letter = sheet.column_letter
-
-        # 將缺少的欄位加進 df
-        missing_cols = [col for col in header_columns if col not in df.columns]
-        # 建立一個含缺少欄位的新 DataFrame，值為空字串（也可以換成 np.nan）
-        new_cols_df = pd.DataFrame({col: [''] * len(df) for col in missing_cols})
-        df = pd.concat([df, new_cols_df], axis=1)
-
+        selected_columns = [col for col in sheet.column_names if col in cosmetic_df.columns]
         # endregion
 
         # region 2. DataFrame convert to Excel
-        df = df[header_columns].copy()
+        df = cosmetic_df[selected_columns].copy()
 
-        # Change column names
-        df.rename(columns=header_columns, inplace=True)
+        df = df.rename(columns=header_columns)
 
-        namesheet = "外觀"
-        df.to_excel(writer, sheet_name=namesheet, index=False, startrow=1)
+        sheet_name = "外觀"
+        df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=1)
 
-        # Read the written Excel file
-        workbook = writer.book
-        worksheet = writer.sheets[namesheet]
-
-        # Freeze the first row
-        worksheet.freeze_panes = worksheet['A3']
-
+        worksheet = writer.sheets[sheet_name]
         sheet.apply_formatting(worksheet)
         # endregion
 
         # region 3. Customize
-        # header_alignment = Alignment(horizontal='center', wrap_text=True)
-        header_alignment = Alignment(horizontal='center')
         header_border = Border(
             top=Side(style='medium'),
             bottom=Side(style='medium'),
@@ -1534,12 +1418,14 @@ class DailyReport(Factory):
                 cell.fill = fill_style
 
         # Cosmetic Header
-        worksheet.merge_cells(f"{column_letter['AL1']}1:{column_letter['KL4']}1")
-        start_row, start_col = worksheet[f"{column_letter['AL1']}1"].row, worksheet[
-            f"{column_letter['AL1']}1"].column
-        end_row, end_col = worksheet[f"{column_letter['KL4']}1"].row, worksheet[
-            f"{column_letter['KL4']}1"].column
-        cell = worksheet[f"{column_letter['AL1']}1"]
+        critical_start = defect_list['CRITICAL'][0]
+        critical_end = defect_list['CRITICAL'][-1]
+        worksheet.merge_cells(f"{column_letter[critical_start]}1:{column_letter[critical_end]}1")
+        start_row, start_col = worksheet[f"{column_letter[critical_start]}1"].row, worksheet[
+            f"{column_letter[critical_start]}1"].column
+        end_row, end_col = worksheet[f"{column_letter[critical_end]}1"].row, worksheet[
+            f"{column_letter[critical_end]}1"].column
+        cell = worksheet[f"{column_letter[critical_start]}1"]
         cell.value = "外觀CRITICAL"
         cell.alignment = Alignment(horizontal="center", vertical="center")
         for row in range(start_row, end_row + 1):
@@ -1548,12 +1434,14 @@ class DailyReport(Factory):
                 cell.border = header_border
                 cell.fill = fill_style
 
-        worksheet.merge_cells(f"{column_letter['AL3']}1:{column_letter['NK1']}1")
-        start_row, start_col = worksheet[f"{column_letter['AL3']}1"].row, worksheet[
-            f"{column_letter['AL3']}1"].column
-        end_row, end_col = worksheet[f"{column_letter['NK1']}1"].row, worksheet[
-            f"{column_letter['NK1']}1"].column
-        cell = worksheet[f"{column_letter['AL3']}1"]
+        major_start = defect_list['MAJOR'][0]
+        major_end = defect_list['MAJOR'][-1]
+        worksheet.merge_cells(f"{column_letter[major_start]}1:{column_letter[major_end]}1")
+        start_row, start_col = worksheet[f"{column_letter[major_start]}1"].row, worksheet[
+            f"{column_letter[major_start]}1"].column
+        end_row, end_col = worksheet[f"{column_letter[major_end]}1"].row, worksheet[
+            f"{column_letter[major_end]}1"].column
+        cell = worksheet[f"{column_letter[major_start]}1"]
         cell.value = "外觀MAJOR"
         cell.alignment = Alignment(horizontal="center", vertical="center")
         for row in range(start_row, end_row + 1):
@@ -1562,12 +1450,14 @@ class DailyReport(Factory):
                 cell.border = header_border
                 cell.fill = fill_style
 
-        worksheet.merge_cells(f"{column_letter['BN2']}1:{column_letter['MX4']}1")
-        start_row, start_col = worksheet[f"{column_letter['BN2']}1"].row, worksheet[
-            f"{column_letter['BN2']}1"].column
-        end_row, end_col = worksheet[f"{column_letter['MX4']}1"].row, worksheet[
-            f"{column_letter['MX4']}1"].column
-        cell = worksheet[f"{column_letter['BN2']}1"]
+        minor_start = defect_list['MINOR'][0]
+        minor_end = defect_list['MINOR'][-1]
+        worksheet.merge_cells(f"{column_letter[minor_start]}1:{column_letter[minor_end]}1")
+        start_row, start_col = worksheet[f"{column_letter[minor_start]}1"].row, worksheet[
+            f"{column_letter[minor_start]}1"].column
+        end_row, end_col = worksheet[f"{column_letter[minor_end]}1"].row, worksheet[
+            f"{column_letter[minor_end]}1"].column
+        cell = worksheet[f"{column_letter[minor_start]}1"]
         cell.value = "外觀MINOR"
         cell.alignment = Alignment(horizontal="center", vertical="center")
         for row in range(start_row, end_row + 1):
@@ -1577,12 +1467,14 @@ class DailyReport(Factory):
                 cell.fill = fill_style
 
         # Pinhole Header
-        worksheet.merge_cells(f"{column_letter['B']}1:{column_letter['N5_1']}1")
-        start_row, start_col = worksheet[f"{column_letter['B']}1"].row, worksheet[
-            f"{column_letter['B']}1"].column
-        end_row, end_col = worksheet[f"{column_letter['N5_1']}1"].row, worksheet[
-            f"{column_letter['N5_1']}1"].column
-        cell = worksheet[f"{column_letter['B']}1"]
+        pinhole_start = defect_list['PINHOLE'][0]
+        pinhole_end = defect_list['PINHOLE'][-1]
+        worksheet.merge_cells(f"{column_letter[pinhole_start]}1:{column_letter[pinhole_end]}1")
+        start_row, start_col = worksheet[f"{column_letter[pinhole_start]}1"].row, worksheet[
+            f"{column_letter[pinhole_start]}1"].column
+        end_row, end_col = worksheet[f"{column_letter[pinhole_end]}1"].row, worksheet[
+            f"{column_letter[pinhole_end]}1"].column
+        cell = worksheet[f"{column_letter[pinhole_start]}1"]
         cell.value = "針孔"
         cell.alignment = Alignment(horizontal="center", vertical="center")
         for row in range(start_row, end_row + 1):
@@ -1608,8 +1500,6 @@ class DailyReport(Factory):
                 cell_above.border = thin_top_border  # ✅ 設定上方框線
         # endregion
 
-        return workbook
-
     def generate_excel(self, fix_main_df, subtotals_df, activation_df, cosmetic_df, excel_file):
         start_time = time.time()
         with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
@@ -1622,7 +1512,7 @@ class DailyReport(Factory):
                     continue
 
                 machine_clean_df = machine_df.sort_values(by=['Date', 'Shift', 'Period'])
-                self.generate_machine_excel(writer, machine_clean_df, self.plant, machine_name)
+                self.generate_machine_excel(writer, machine_clean_df, machine_name)
 
             # 稼動率Raw Data
             self.generate_activation_excel(writer, activation_df)
@@ -1646,14 +1536,17 @@ class DailyReport(Factory):
         # Only substring Name right 3 characters
         chart_df['Name_short'] = chart_df['Name'].apply(lambda x: x[-3:])
 
-        chart_df['Unfinished'] = (chart_df['Target'] - chart_df['sum_qty']).apply(lambda x: max(x, 0))  # 未達成數量, 負數為0
-        chart_df['Achievement Rate'] = chart_df['sum_qty'] / chart_df['Target'] * 100  # 達成率（百分比）
+        chart_df['SecondGrade'] = chart_df['SecondGrade'].replace('', 0).fillna(0).astype(float)
+        chart_df['Unfinished'] = (
+                chart_df['Target'] - chart_df['OnlinePacking'] - chart_df['SecondGrade']
+        ).clip(lower=0)
+        chart_df['Achievement Rate'] = (chart_df['OnlinePacking']+chart_df['SecondGrade']) / chart_df['Target'] * 100  # 達成率（百分比）
         chart_df.loc[chart_df['Target'] == 0, 'Achievement Rate'] = None  # 當 Target 為 0，將達成率設為 None
 
         # Draw Bar Chart
         bar_width = 0.6
-        bars = ax1.bar(chart_df['Name_short'], chart_df['sum_qty'], width=bar_width, color='lightcoral', label='日目標達成率')
-        ax1.bar(chart_df['Name_short'], chart_df['Unfinished'], width=bar_width, bottom=chart_df['sum_qty'],
+        bars = ax1.bar(chart_df['Name_short'], chart_df['OnlinePacking']+chart_df['SecondGrade'], width=bar_width, color='lightcoral', label='日目標達成率')
+        ax1.bar(chart_df['Name_short'], chart_df['Unfinished'], width=bar_width, bottom=chart_df['OnlinePacking'],
                 color='lightgreen')
 
         # Set the X-axis label and the Y-axis label
@@ -1671,7 +1564,7 @@ class DailyReport(Factory):
 
         ax1.yaxis.set_major_formatter(FuncFormatter(y_formatter))
 
-        achieve_rate = 95 if "NBR" in self.plant else 98
+        achieve_rate = self.capacity_target
 
         # 在每個長條圖上方顯示達成率百分比
         for bar, unfinished, rate in zip(bars, chart_df['Unfinished'], chart_df['Achievement Rate']):
@@ -1704,8 +1597,6 @@ class DailyReport(Factory):
         end_time = time.time()
         elapsed_time = end_time - start_time
         self.logger.info(f"Time taken: {elapsed_time:.2f} seconds.")
-
-        return image_stream
 
     def calculate_activation(self, mach):
         try:
@@ -1759,8 +1650,8 @@ class DailyReport(Factory):
 
     def calculate_cosmetic_dpm(self, mach_df, cosmetic_df):
         df = pd.merge(mach_df, cosmetic_df, on=['runcard'], how='left')
-        inspect_total = df['cosmetic_inspect_qty_x'].sum()
-        sum_qty_total = df['cosmetic_sum_qty'].sum()
+        inspect_total = df['cosmetic_inspect_qty'].sum()
+        sum_qty_total = df['cosmetic_qty'].sum()
 
         if inspect_total > 0:
             dpm = round(sum_qty_total * 1_000_000 / inspect_total, 0)
@@ -1779,17 +1670,71 @@ class DailyReport(Factory):
         if inspect_total > 0:
             dpm = round(sum_qty_total * 1_000_000 / inspect_total, 0)
         else:
-            dpm = None  # 或設為 0 或 NaN，視你的需求而定
+            dpm = 0  # 或設為 0 或 NaN，視你的需求而定
 
         return dpm
 
     # 缺模率
-    def calculate_mold_lost_rate(self, mach_df):
-        return 0
+    def get_lost_mold_rate(self):
+        sql = f"""
+        SELECT cd.MES_MACHINE Name, cd.LINE Line, CAST(DATEPART(hour, CreationTime) as INT) Period, round(sum(ModelLostQty) / sum(ModelQty),4) Lost_Mold_Rate
+          FROM [PMG_DEVICE].[dbo].[COUNTING_DATA] c
+          JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] cd on c.MachineName = cd.COUNTING_MACHINE
+          where ModelLostQty > 0 and ModelLostQty < 1000
+          and CreationTime between CONVERT(DATETIME, '{self.report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{self.report_date2} 05:59:59', 120)
+          group by cd.MES_MACHINE, cd.LINE, CAST(DATEPART(hour, CreationTime) as INT)
+        """
+
+        rows = self.mes_db.select_sql_dict(sql)
+
+        df = pd.DataFrame(rows)
+
+        return df
 
     # 離型不良率
-    def calculate_dmf_rate(self, mach_df):
-        return 0
+    def get_dmf_rate(self):
+        if "NBR" in self.plant:
+            sql = f"""
+            SELECT 
+                cd.MES_MACHINE Name, cd.LINE Line, CAST(DATEPART(hour, CreationTime) as INT) Period, 
+                CASE 
+                    WHEN SUM(ModelQty2) = 0 THEN 0
+                    ELSE ROUND(
+                        (SUM(OverShortQty2) + SUM(OverLongQty2)) / SUM(ModelQty2), 
+                        4
+                    )
+                END AS DMF_Rate
+            FROM 
+                [PMG_DEVICE].[dbo].[COUNTING_DATA] c
+            JOIN 
+                [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] cd 
+                ON c.MachineName = cd.COUNTING_MACHINE
+            WHERE 
+                CreationTime BETWEEN 
+                    CONVERT(DATETIME, '{self.report_date1} 06:00:00', 120) 
+                    AND 
+                    CONVERT(DATETIME, '{self.report_date2} 05:59:59', 120)
+            GROUP BY 
+                MES_MACHINE,LINE,CAST(DATEPART(hour, CreationTime) as INT)
+            """
+
+        elif "PVC" in self.plant:
+            sql = f"""
+            SELECT cd.MES_MACHINE Name, cd.LINE Line, CAST(DATEPART(hour, CreationTime) as INT) Period, CASE 
+                    WHEN SUM(ModelQty2) = 0 THEN 0
+                    ELSE ROUND(SUM(Qty2) / SUM(ModelQty2), 4)
+                END AS DMF_Rate
+              FROM [PMG_DEVICE].[dbo].[PVC_GRM_DATA] g
+              JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] cd on g.MachineName = cd.COUNTING_MACHINE
+              where CreationTime between CONVERT(DATETIME, '{self.report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{self.report_date2} 05:59:59', 120)
+              group by cd.MES_MACHINE, cd.LINE, CAST(DATEPART(hour, CreationTime) as INT) 
+            
+            """
+        rows = self.mes_db.select_sql_dict(sql)
+
+        df = pd.DataFrame(rows)
+
+        return df
 
     def send_email(self, config, subject, file_list, image_buffers, msg_list, error_list):
         logging.info(f"Start to send Email")
@@ -1801,11 +1746,13 @@ class DailyReport(Factory):
         if len(msg_list) > 0:
             normal_msg = normal_msg + '<br>'
 
+        content = self.get_mail_content()
+
         max_reSend = 5
         reSent = 0
         while reSent < max_reSend:
             try:
-                super().send_email(config, subject, file_list, image_buffers, error_msg, normal_msg=normal_msg)
+                super().send_email(config, subject, file_list, image_buffers, error_msg, normal_msg=normal_msg, content=content)
                 print('Email sent successfully')
                 logging.info(f"Email sent successfully")
                 break
@@ -1819,6 +1766,86 @@ class DailyReport(Factory):
                     break
                 time.sleep(180)  # seconds
 
+    def get_mail_content(self):
+        result = """
+        <hr />
+        <table border="1" cellspacing="0" cellpadding="6" style="border-collapse: collapse; font-family: Arial; font-size: 14px; width:100%;background-color:#FFF">
+            <thead style="background-color:#f0f0f0;">
+                <tr>
+                  <th style="width:200px;">大目標(G)</th>
+                  <th style="width:500px;">小目標KPI(P)</th>
+                  <th style="width:150px;">執行階段日期</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td rowspan="4">
+                    設備綜合效率OEE<br/>
+                    <strong>KPI: ≥95%</strong>
+                  </td>
+                  <td>
+                    產能效率(KPI: ≥95%)*產品良率(KPI: ≥95%)*設備妥善率(KPI: ≥98%)<br/>
+                    <span style="color:red; font-weight:bold;">OEE = 88%</span>
+                  </td>
+                  <td>2025/01/03</td>
+                </tr>
+                <tr>
+                  <td>
+                    產能效率(KPI: ≥97%)*產品良率(KPI: ≥97%)*設備妥善率(KPI: ≥97%)<br/>
+                    <span style="color:red; font-weight:bold;">OEE = 92%</span>
+                  </td>
+                  <td>2025/04/06</td>
+                </tr>
+                <tr>
+                  <td>
+                    產能效率(KPI: ≥98%)*產品良率(KPI: ≥98%)*設備妥善率(KPI: ≥98%)<br/>
+                    <span style="color:red; font-weight:bold;">OEE = 94%</span>
+                  </td>
+                  <td>2025/07/09</td>
+                </tr>
+                <tr>
+                  <td>
+                    產能效率(KPI: ≥98%)*產品良率(KPI: ≥98%)*設備妥善率(KPI: ≥99%)<br/>
+                    <span style="color:red; font-weight:bold;">OEE = 95%</span>
+                  </td>
+                  <td>2025/10/12</td>
+                </tr>
+                <tr>
+                  <td rowspan="3">
+                    NBR廢品率<br/>
+                    <strong>KPI: ≤0.4%</strong>
+                  </td>
+                  <td>廢品率(KPI: ≤0.9%)</td>
+                  <td>2025/01/06</td>
+                </tr>
+                <tr>
+                  <td>廢品率(KPI: ≤0.6%)</td>
+                  <td>2025/07/10</td>
+                </tr>
+                <tr>
+                  <td>廢品率(KPI: ≤0.4%)</td>
+                  <td>2025/11/12</td>
+                </tr>
+                <tr>
+                  <td rowspan="3">
+                    PVC廢品率<br/>
+                    <strong>KPI: ≤0.2%</strong>
+                  </td>
+                  <td>廢品率(KPI: ≤0.35%)</td>
+                  <td>2025/01/06</td>
+                </tr>
+                <tr>
+                  <td>廢品率(KPI: ≤0.3%)</td>
+                  <td>2025/07/10</td>
+                </tr>
+                <tr>
+                  <td>廢品率(KPI: ≤0.2%)</td>
+                  <td>2025/11/12</td>
+                </tr>
+              </tbody>
+        </table>
+        """
+        return result
 
 report_date1 = datetime.today() - timedelta(days=1)
 report_date1 = report_date1.strftime('%Y%m%d')
