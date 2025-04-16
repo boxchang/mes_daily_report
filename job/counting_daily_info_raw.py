@@ -1,6 +1,9 @@
 import configparser
 import sys
 import os
+
+from factory import ConfigObject
+
 curPath = os.path.abspath(os.path.dirname(__file__))
 rootPath = os.path.split(curPath)[0]
 sys.path.append(rootPath)
@@ -17,15 +20,12 @@ class Output(object):
     sLimit = 10
     plant = ""
 
-    def __init__(self, plant, report_date1, report_date2):
+    def __init__(self, location, plant, report_date1, report_date2):
         self.plant = plant
         self.report_date1 = report_date1
         self.report_date2 = report_date2
 
-        config_file = "..\mes_daily_report.config"
-        config = configparser.ConfigParser()
-        config.read(config_file, encoding="utf-8")
-        self.location = config.get("Settings", "location", fallback=None)
+        self.location = location
 
         if self.location in "GD":
             self.mes_db = mes_database()
@@ -70,20 +70,16 @@ class Output(object):
 
     def sorting_data(self, year, week_no, plant, start_date, end_date):
 
-        sPlant = ""
+        sPlant = location
         sPlant2 = ""
-        sPlant3 = ""
+        sPlant3 = location + plant
 
-        if plant == 'GDPVC':
-            sPlant = 'GD'
+        if 'PVC' in plant:
             sPlant2 = 'PVC'
-            sPlant3 = 'GDPVC'
             up_limit = 'UpperSpeed'
             low_limit = 'LowerSpeed'
-        elif plant == 'GDNBR' or plant == 'LKNBR':
-            sPlant = 'GD'
+        elif 'NBR' in plant:
             sPlant2 = 'NBR'
-            sPlant3 = 'GDNBR'
             up_limit = 'UpperLineSpeed_Min'
             low_limit = 'LowerLineSpeed_Min'
 
@@ -93,7 +89,7 @@ class Output(object):
                     join [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] cdm
                     on cdm.MES_MACHINE = dml.name
                     where dml.DataModelTypeId= 'DMT000003' 
-                    and dml.name like '%{sPlant2}%'
+                    and dml.name like '%{self.plant}%'
                """
         mach_list = self.mes_db.select_sql_dict(sql)
 
@@ -110,7 +106,7 @@ class Output(object):
                             FROM [PMG_DEVICE].[dbo].[COUNTING_DATA] d
                             JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] m
                                 ON d.MachineName = m.COUNTING_MACHINE
-                            WHERE m.MES_MACHINE = '{mach}' AND CreationTime BETWEEN CONVERT(DATETIME, '{start_date} 06:00:00', 120) AND DATEADD(DAY, 1, CONVERT(DATETIME, '{end_date} 05:59:59', 120))),
+                            WHERE m.MES_MACHINE = '{mach}' AND CreationTime BETWEEN CONVERT(DATETIME, '{start_date} 06:00:00', 120) AND CONVERT(DATETIME, '{end_date} 05:59:59', 120)),
                         GroupStats AS (
                             SELECT MES_MACHINE, LINE, StopGroup, COUNT(*) AS StopRowCount, MIN(Cdt) AS StartCdt, MAX(Cdt) AS EndCdt
                             FROM ConsecutiveStops
@@ -135,6 +131,15 @@ class Output(object):
 
             # 抓取工單派工的Runcard
             sql = f"""
+                WITH IsolationTable AS (
+                    SELECT RunCardId, sum(ActualQty) isolation_qty
+                      FROM [PMGMES].[dbo].[PMG_MES_Isolation] i
+                      JOIN [PMGMES].[dbo].[PMG_MES_RunCard] r on r.Id = i.RunCardId
+                      WHERE  ((r.InspectionDate = '20250410' AND r.Period BETWEEN 6 AND 23)
+                               OR (r.InspectionDate = '20250411' AND r.Period BETWEEN 0 AND 5))
+                    group by RunCardId
+                )
+                
                 SELECT
                     wo.Id AS WorkOrder, wo.PartNo, wo.ProductItem, wo.CustomerCode, wo.CustomerName,rc.InspectionDate AS WorkDate, rc.MachineName AS Machine, rc.LineName AS Line,
                     rc.Id as Runcard, rc.period AS Period,  std.{low_limit} AS LowSpeed, std.{up_limit} AS UpSpeed,
@@ -146,7 +151,8 @@ class Output(object):
 					MIN(wo.StartDate) AS WoStartDate, 
 					MAX(wo.EndDate) AS WoEndDate,
 					MAX(ISNULL(op.StandardAQL, wp.StandardAQL)) StandardAQL,
-					MAX(ISNULL(op.InspectedAQL, wp.InspectedAQL)) InspectedAQL
+					MAX(ISNULL(op.InspectedAQL, wp.InspectedAQL)) InspectedAQL,
+					SUM(iso.isolation_qty) IsolationQty
                 FROM [PMGMES].[dbo].[PMG_MES_RunCard] rc
                 JOIN [PMGMES].[dbo].[PMG_MES_WorkOrder] wo
                     ON wo.id = rc.WorkOrderId AND wo.StartDate IS NOT NULL
@@ -158,6 +164,7 @@ class Output(object):
                     ON sp.RunCardId = rc.id AND sp.WorkOrderId = wo.id
 				LEFT JOIN [dbo].[PMG_MES_WorkInProcess] op ON rc.Id = op.RunCardId and op.PackingType = 'OnlinePacking'
 				LEFT JOIN [dbo].[PMG_MES_WorkInProcess] wp ON rc.Id = wp.RunCardId and wp.PackingType = 'WIPPacking'
+				LEFT JOIN IsolationTable iso on iso.RunCardId = rc.Id
                 WHERE rc.MachineName = '{mach}'
                     AND ((rc.InspectionDate = '{start_date}' AND rc.Period BETWEEN 6 AND 23)
                     OR (rc.InspectionDate = '{end_date}' AND rc.Period BETWEEN 0 AND 5))
@@ -237,6 +244,7 @@ class Output(object):
                 data_df['StandardAQL'] = data_df['StandardAQL'].fillna('').astype(str)
                 data_df['InspectedAQL'] = data_df['InspectedAQL'].fillna('').astype(str)
                 data_df['Shift'] = data_df['Period'].apply(self.shift)
+                data_df['IsolationQty'] = data_df['IsolationQty'].fillna('null').astype(str)
 
                 # 點數機資料修正
                 if not fix_df.empty:
@@ -278,6 +286,7 @@ class Output(object):
                         scrap_qty = row['ScrapQuantity'] if row['ScrapQuantity'] != '' else 'null'
                         standard_aql = row['StandardAQL'] if row['StandardAQL'] != '' else 'null'
                         inspected_aql = row['InspectedAQL'] if row['InspectedAQL'] != '' else 'null'
+                        isolation_qty = row['IsolationQty'] if row['IsolationQty'] != 'null' else 0
 
                         if work_date != '':
                             if int(period) >= 0 and int(period) <= 5:
@@ -286,17 +295,19 @@ class Output(object):
                             else:
                                 belong_to = work_date
 
+                        if belong_to == "2025-04-11":
+                            print(belong_to)
+
                         insert_sql = f"""
                         Insert into counting_daily_info_raw ([Year], Week_No, WorkOrder, WoStartDate, WoEndDate, PartNo, ProductItem, WorkDate, 
                         Machine, Line, Shift, Runcard, Period, LowSpeed, UpSpeed, StdSpeed, MinSpeed, MaxSpeed, AvgSpeed,RunTime, StopTime, CountingQty, OnlinePacking, WIPPacking, Target, FaultyQuantity, ScrapQuantity, 
-                        StandardAQL, InspectedAQL,
-                        create_at, plant, branch, belong_to, CustomerCode, CustomerName)
+                        StandardAQL, InspectedAQL, create_at, plant, branch, belong_to, CustomerCode, CustomerName, IsolationQty)
                         Values({year}, '{week_no}', '{work_order}','{wo_start_date}','{wo_end_date}','{part_no}','{product_item}','{work_date}',
                         '{machine}','{line}', N'{shift}','{runcard}',{period},{low_speed},{up_speed},{std_speed}, 
                         {min_speed},{max_speed},{avg_speed},{run_time}, {stop_time},
                         {counting_qty},{online_packing_qty},{wip_packing_qty},{target},{faulty_qty},{scrap_qty},
                         {standard_aql}, {inspected_aql},
-                        GETDATE(), '{sPlant}', '{sPlant3}', '{belong_to}', '{customer_code}', '{customer_name}')
+                        GETDATE(), '{sPlant}', '{plant}', '{belong_to}', '{customer_code}', '{customer_name}', {isolation_qty})
                         """
                         print(insert_sql)
                         self.mes_olap_db.execute_sql(insert_sql)
@@ -310,11 +321,20 @@ report_date1 = report_date1.strftime('%Y%m%d')
 report_date2 = datetime.today()
 report_date2 = report_date2.strftime('%Y%m%d')
 
-# report_date1 = "20250403"
-# report_date2 = "20250404"
+config_file = "..\mes_daily_report.config"
+config = configparser.ConfigParser()
+config.read(config_file, encoding='utf-8')
 
-plants = ['GDNBR', 'GDPVC']
+location = config['Settings'].get('location')
+plants = config['Settings'].get('plants', '').split(',')
+fix_start_date = config['Settings'].get('fix_start_date')
+fix_end_date = config['Settings'].get('fix_end_date')
+
+if len(fix_start_date) > 0 and len(fix_end_date) > 0:
+    report_date1 = fix_start_date
+    report_date2 = fix_end_date
+
 
 for plant in plants:
-    output = Output(plant, report_date1, report_date2)
+    output = Output(location, plant, report_date1, report_date2)
     output.execute()

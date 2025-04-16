@@ -59,7 +59,6 @@ class Utils(object):
               ORDER BY year desc, month desc, month_week
         """
 
-        print(sql)
         raws = vnedc_db.select_sql_dict(sql)
 
         if len(raws) > 0:

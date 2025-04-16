@@ -357,7 +357,7 @@ class DailyReport(Factory):
                 CAST(round(weight_lower,2) AS DECIMAL(10, 2)) WeightLower,
                 CAST(round(weight_upper,2) AS DECIMAL(10, 2)) WeightUpper,
                 runcard,
-                wp.ActualQty WIP_Qty,
+                wp.ActualQty WIPPacking,
                 op.ActualQty OnlinePacking,
                 t.ActualQty Ticket_Qty,
                 isn.ActualQty Isolation_Qty,
@@ -709,7 +709,7 @@ class DailyReport(Factory):
                     'ProductionTime': '',
                     'sum_qty': 0,
                     'OnlinePacking': 0,
-                    'WIP_Qty': 0,
+                    'WIPPacking': 0,
                     'Isolation_Qty': 0,
                     'DMF_Rate': 0,
                     'Lost_Mold_Rate': 0,
@@ -763,7 +763,7 @@ class DailyReport(Factory):
                     'ProductionTime': min2hour(line_group['ProductionTime']),
                     'sum_qty': line_group['sum_qty'].sum(),
                     'OnlinePacking': line_group['OnlinePacking'].sum(),
-                    'WIP_Qty': line_group['WIP_Qty'].sum(),
+                    'WIPPacking': line_group['WIPPacking'].sum(),
                     'Isolation_Qty': line_group['Isolation_Qty'].sum(),
                     'DMF_Rate': line_group['DMF_Rate'].mean(),
                     'Lost_Mold_Rate': line_group['Lost_Mold_Rate'].mean(),
@@ -800,7 +800,7 @@ class DailyReport(Factory):
                     'ProductionTime': day_df['ProductionTime'].mean(),
                     'sum_qty': day_df['sum_qty'].sum(),
                     'OnlinePacking': day_df['OnlinePacking'].sum(),
-                    'WIP_Qty': day_df['WIP_Qty'].sum(),
+                    'WIPPacking': day_df['WIPPacking'].sum(),
                     'Isolation_Qty': day_df['Isolation_Qty'].sum(),
                     'DMF_Rate': day_df['DMF_Rate'].mean(),
                     'Lost_Mold_Rate': day_df['Lost_Mold_Rate'].mean(),
@@ -840,7 +840,7 @@ class DailyReport(Factory):
                     'ProductionTime': night_df['ProductionTime'].mean(),
                     'sum_qty': night_df['sum_qty'].sum(),
                     'OnlinePacking': night_df['OnlinePacking'].sum(),
-                    'WIP_Qty': night_df['WIP_Qty'].sum(),
+                    'WIPPacking': night_df['WIPPacking'].sum(),
                     'Isolation_Qty': night_df['Isolation_Qty'].sum(),
                     'DMF_Rate': night_df['DMF_Rate'].mean(),
                     'Lost_Mold_Rate': night_df['Lost_Mold_Rate'].mean(),
@@ -906,7 +906,7 @@ class DailyReport(Factory):
                 'ProductionTime': day_production_time + night_production_time,
                 'sum_qty': sum_qty,
                 'OnlinePacking': mach_group['OnlinePacking'].sum(),
-                'WIP_Qty': mach_group['WIP_Qty'].sum(),
+                'WIPPacking': mach_group['WIPPacking'].sum(),
                 'Isolation_Qty': mach_group['Isolation_Qty'].sum(),
                 'DMF_Rate': mach_group['DMF_Rate'].mean(),  # 離型不良率
                 'Lost_Mold_Rate': mach_group['Lost_Mold_Rate'].mean(),  # 缺模率
@@ -1011,7 +1011,7 @@ class DailyReport(Factory):
         sheet.add(ColumnControl('sum_qty', 'right', '#,##0', '生產總量', font, hidden=False, width=14,
                                 comment="點數機數量", comment_width=200))
         sheet.add(ColumnControl('OnlinePacking', 'right', '#,##0', '包裝確認量', font, hidden=False, width=14))
-        sheet.add(ColumnControl('WIP_Qty', 'right', '#,##0', '半成品入庫量', font, hidden=False, width=14))
+        sheet.add(ColumnControl('WIPPacking', 'right', '#,##0', '半成品入庫量', font, hidden=False, width=14))
         sheet.add(ColumnControl('Target', 'right', '#,##0', '目標產能', font, hidden=False, width=14,
                                 comment="生產時間(IPQC) * (標準車速上限/節距調整值)", comment_width=600))
         sheet.add(ColumnControl('Activation', 'right', '0.00%', f'稼動率≥ {self.activation_target*100:g}%', font, hidden=True, width=12, limit=[None, self.activation_target],
@@ -1143,7 +1143,7 @@ class DailyReport(Factory):
         sheet.add(ColumnControl('LineSpeedUpper', 'right', '0', '標準上限', font, hidden=False, width=9.5))
         sheet.add(ColumnControl('sum_qty', 'right', '#,##0', '產量(加總)', font, hidden=False, width=11))
         sheet.add(ColumnControl('OnlinePacking', 'right', '#,##0', '包裝確認量', font, hidden=False, width=11))
-        sheet.add(ColumnControl('WIP_Qty', 'right', '#,##0', '半成品入庫量', font, hidden=False, width=11))
+        sheet.add(ColumnControl('WIPPacking', 'right', '#,##0', '半成品入庫量', font, hidden=False, width=11))
         sheet.add(ColumnControl('Separate', 'center', '@', '針孔', font, hidden=False, width=9))
         sheet.add(ColumnControl('Target', 'center', '#,##0', '目標產能', font, hidden=False, width=11,
                                 comment="有IPQC的機台運作分鐘數 * (標準車速上限/節距調整值)"))
@@ -1537,16 +1537,18 @@ class DailyReport(Factory):
         chart_df['Name_short'] = chart_df['Name'].apply(lambda x: x[-3:])
 
         chart_df['SecondGrade'] = chart_df['SecondGrade'].replace('', 0).fillna(0).astype(float)
+        qty_sum = chart_df['OnlinePacking']+chart_df['WIPPacking']+chart_df['SecondGrade']
+
         chart_df['Unfinished'] = (
-                chart_df['Target'] - chart_df['OnlinePacking'] - chart_df['SecondGrade']
+                chart_df['Target']-qty_sum
         ).clip(lower=0)
-        chart_df['Achievement Rate'] = (chart_df['OnlinePacking']+chart_df['SecondGrade']) / chart_df['Target'] * 100  # 達成率（百分比）
+        chart_df['Achievement Rate'] = qty_sum / chart_df['Target'] * 100  # 達成率（百分比）
         chart_df.loc[chart_df['Target'] == 0, 'Achievement Rate'] = None  # 當 Target 為 0，將達成率設為 None
 
         # Draw Bar Chart
         bar_width = 0.6
-        bars = ax1.bar(chart_df['Name_short'], chart_df['OnlinePacking']+chart_df['SecondGrade'], width=bar_width, color='lightcoral', label='日目標達成率')
-        ax1.bar(chart_df['Name_short'], chart_df['Unfinished'], width=bar_width, bottom=chart_df['OnlinePacking'],
+        bars = ax1.bar(chart_df['Name_short'], qty_sum, width=bar_width, color='lightcoral', label='日目標達成率')
+        ax1.bar(chart_df['Name_short'], chart_df['Unfinished'], width=bar_width, bottom=qty_sum,
                 color='lightgreen')
 
         # Set the X-axis label and the Y-axis label
@@ -1570,7 +1572,7 @@ class DailyReport(Factory):
         for bar, unfinished, rate in zip(bars, chart_df['Unfinished'], chart_df['Achievement Rate']):
             if pd.notnull(rate):  # 僅顯示達成率不為 None 的數值
                 height = bar.get_height() + unfinished  # 計算長條的總高度
-                if rate < achieve_rate:
+                if rate < achieve_rate*100:
                     ax1.text(bar.get_x() + bar.get_width() / 2, height + 20000, f'{rate:.1f}%', ha='center',
                              va='bottom',
                              fontsize=10, color='red',
@@ -1581,7 +1583,7 @@ class DailyReport(Factory):
                              va='bottom',
                              fontsize=10)
 
-        plt.title(f'{self.location} {self.plant} {self.report_date1} 日產量與日目標達成率 (達成率目標 > {achieve_rate}%)')
+        plt.title(f'{self.location} {self.plant} {self.report_date1} 日產量與日目標達成率 (達成率目標 > {achieve_rate*100:g}%)')
 
         # Display the legend of the bar chart and line chart together
         fig.legend(loc="upper right", bbox_to_anchor=(1, 1), bbox_transform=ax1.transAxes)
