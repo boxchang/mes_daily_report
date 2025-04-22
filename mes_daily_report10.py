@@ -85,13 +85,17 @@ class mes_daily_report(object):
         file_list = []
         image_buffers = []
 
-        for plant in plants:
-            logging.info(f"{plant} start running......")
-            dr = DailyReport(mes_db, mes_olap_db, location, plant, report_date1, report_date2, hour_output_limit,
-                             report_font, logging)
+        dr = DailyReport(mes_db, mes_olap_db, location, report_date1, report_date2, hour_output_limit,
+                         report_font, logging)
 
-            logging.info(f"{plant} precheck......")
-            dr.Precheck()
+        logging.info(f"precheck......")
+        dr.Precheck()
+
+        for plant in plants:
+            dr.plant = plant
+
+            logging.info(f"{plant} start running......")
+            dr.Target_Setting(plant)
 
             logging.info(f"{plant} generate_main_df......")
             main_df, cosmetic_df = dr.generate_main_df()
@@ -151,10 +155,9 @@ class DailyReport(Factory):
             self.former_miss_target = 0.001
 
 
-    def __init__(self, mes_db, mes_olap_db, location, plant, report_date1, report_date2, hour_output_limit, report_font,
+    def __init__(self, mes_db, mes_olap_db, location, report_date1, report_date2, hour_output_limit, report_font,
                  logger):
         self.location = location
-        self.plant = plant
         self.report_date1 = report_date1
         self.report_date2 = report_date2
         self.hour_output_limit = int(hour_output_limit) if hour_output_limit else 1000
@@ -163,14 +166,12 @@ class DailyReport(Factory):
         self.mes_olap_db = mes_olap_db
         self.logger = logger
 
-        self.Target_Setting(plant)
-
     def Precheck(self):
         start_time = time.time()
 
         sql = f"""
             WITH WorkOrder AS (
-                select distinct CustomerCode, CustomerName from [dbo].[counting_daily_info_raw]
+                select distinct CustomerCode, CustomerName from [dbo].[counting_hourly_info_raw]
                 where CustomerCode <> '' or CustomerName <> '' and belong_to = '{self.report_date1}'
             )
 
@@ -189,7 +190,7 @@ class DailyReport(Factory):
 
         sql = f"""
         SELECT distinct cos.defect_code
-          FROM [MES_OLAP].[dbo].[counting_daily_info_raw] r
+          FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] r
           LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_cosmetic_data] cos on r.Runcard = cos.runcard
           LEFT JOIN [MES_OLAP].[dbo].[mes_defect_define] d on d.defect_code = cos.defect_code
           where r.belong_to = '{self.report_date1}' and cos.defect_code <> ''
@@ -325,7 +326,12 @@ class DailyReport(Factory):
                 SELECT RunCardId,InspectedAQL,sum(ActualQty) ActualQty from [PMGMES].[dbo].[PMG_MES_WorkInProcess] wip
                 JOIN WorkOrderInfo w on w.runcard = wip.RunCardId
                 group by RunCardId,InspectedAQL
-            )
+            ),
+			PMG_MES_Isolation2 as (
+				SELECT RunCardId,sum(ActualQty) ActualQty from [PMGMES].[dbo].[PMG_MES_Isolation] i
+                JOIN WorkOrderInfo w on w.runcard = i.RunCardId
+                group by RunCardId
+			)
 
             SELECT 
                 wo.MachineId,
@@ -373,7 +379,7 @@ class DailyReport(Factory):
                 LEFT JOIN WIPPacking wp on wo.runcard = wp.RunCardId
                 LEFT JOIN OnlinePacking op on wo.runcard = op.RunCardId
                 LEFT JOIN Pitch pc on pc.Name = wo.Name
-                LEFT JOIN PMG_MES_Isolation isn on isn.RunCardId = wo.runcard
+                LEFT JOIN PMG_MES_Isolation2 isn on isn.RunCardId = wo.runcard
                 LEFT JOIN Ticket t on wo.runcard = t.RunCardId
                 WHERE NOT (wo.WorkOrderId IS NOT NULL AND t.ActualQty IS NULL) --有小票才列入計算，主要是User會用錯RunCard，以有小票為主進行統計
             ORDER BY 
@@ -454,7 +460,7 @@ class DailyReport(Factory):
           ,[Pinhole_Defect]
           ,[Cosmetic_Value]
           ,[Cosmetic_Status]
-        from counting_daily_info_raw c
+        from counting_hourly_info_raw c
         JOIN mes_ipqc_data ipqc on c.Runcard = ipqc.Runcard
         LEFT JOIN sap_customer_define cu on cu.CustomerCode = c.CustomerCode
         where c.belong_to = '{self.report_date1}'
@@ -468,7 +474,7 @@ class DailyReport(Factory):
 
         sql = f"""    
           SELECT counting.Runcard runcard,counting.belong_to,counting.Machine,counting.Line,counting.Shift,counting.WorkOrder,counting.PartNo,counting.ProductItem,SalePlaceCode,counting.Period
-          FROM [MES_OLAP].[dbo].[counting_daily_info_raw] counting
+          FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] counting
           LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on ipqc.Runcard = counting.Runcard
           LEFT JOIN [MES_OLAP].[dbo].[sap_customer_define] cus on cus.CustomerCode = counting.CustomerCode
           where counting.belong_to = '{self.report_date1}'
@@ -482,7 +488,7 @@ class DailyReport(Factory):
 
         weight_sql = f"""
         SELECT ipqc.Runcard runcard, Cast(SalePlaceCode as varchar)+Weight_Defect defect_code, 1 qty 
-          FROM [MES_OLAP].[dbo].[counting_daily_info_raw] counting
+          FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] counting
           LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on ipqc.Runcard = counting.Runcard
           LEFT JOIN [MES_OLAP].[dbo].[sap_customer_define] cus on cus.CustomerCode = counting.CustomerCode
           where counting.belong_to = '{report_date1}'
@@ -512,7 +518,7 @@ class DailyReport(Factory):
 
         cosmetic_sql = f"""
          SELECT r.runcard, d.defect_code, sum(qty) cosmetic_qty,  max(cos.cosmetic_inspect_qty) cosmetic_inspect_qty
-          FROM [MES_OLAP].[dbo].[counting_daily_info_raw] r
+          FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] r
           LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_cosmetic_data] cos on r.Runcard = cos.runcard
           LEFT JOIN [MES_OLAP].[dbo].[mes_defect_define] d on d.defect_code = cos.defect_code
           where r.belong_to = '{self.report_date1}' and r.runcard<>''
@@ -531,7 +537,7 @@ class DailyReport(Factory):
         # 計算針孔Defect Code加總
         pinhole_sql = f"""
         SELECT r.runcard, d.defect_code, sum(qty) pinhole_sum_qty
-          FROM [MES_OLAP].[dbo].[counting_daily_info_raw] r
+          FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] r
           JOIN [MES_OLAP].[dbo].[mes_ipqc_pinhole_data] cos on r.Runcard = cos.runcard
           JOIN [MES_OLAP].[dbo].[mes_defect_define] d on d.defect_code = cos.defect_code
           where r.belong_to = '{report_date1}'
@@ -604,7 +610,7 @@ class DailyReport(Factory):
 
         sql = f"""
         SELECT WorkDate CountingDate, Machine Name, Line, Period, MinSpeed, MaxSpeed, AvgSpeed, CountingQty
-          FROM [MES_OLAP].[dbo].[counting_daily_info_fix] where 
+          FROM [MES_OLAP].[dbo].[counting_hourly_info_fix] where 
           WorkDate between '{self.report_date1}' and '{self.report_date2}'
         """
 
@@ -728,15 +734,17 @@ class DailyReport(Factory):
             tmp_rows = []
             for (shift, line_name), line_group in line_grouped:
 
-                line_sum_qty = line_group['sum_qty'].sum() + line_group['Scrap'].sum() + line_group['SecondGrade'].sum()
+                line_sum_qty = line_group['OnlinePacking'].sum() + line_group['WIPPacking'].sum()
+                line_tmp_qty = line_sum_qty + line_group['Scrap'].sum() + line_group['SecondGrade'].sum()
+
                 line_secondGrade_qty = line_group['SecondGrade'].sum()
-                line_second_rate = round(float(line_secondGrade_qty) / line_sum_qty, 3) if line_sum_qty > 0 else 0
+                line_second_rate = round(float(line_secondGrade_qty) / line_tmp_qty, 3) if line_tmp_qty > 0 else 0
 
                 line_scrap_qty = line_group['Scrap'].sum()
-                line_scrap_rate = round(float(line_scrap_qty) / line_sum_qty, 3) if line_sum_qty > 0 else 0
+                line_scrap_rate = round(float(line_scrap_qty) / line_tmp_qty, 3) if line_tmp_qty > 0 else 0
 
                 line_over_control_qty = line_group['OverControlQty'].sum()
-                line_over_control_rate = round(float(line_over_control_qty) / line_sum_qty, 3) if line_sum_qty > 0 else 0
+                line_over_control_rate = round(float(line_over_control_qty) / line_tmp_qty, 3) if line_tmp_qty > 0 else 0
 
                 line_cosmetic_dt = mach_cosmetic_dt[(mach_cosmetic_dt['Shift'] == shift) &
                                                     (mach_cosmetic_dt['Line'] == line_name)
@@ -867,7 +875,7 @@ class DailyReport(Factory):
             activation_rate, df_activation_row = self.calculate_activation(mach_name)
 
             # Second Grade
-            sum_qty = mach_group['sum_qty'].sum()
+            sum_qty = mach_group['OnlinePacking'].sum() + mach_group['WIPPacking'].sum()
             scrap_qty = mach_group['Scrap'].sum()
             second_qty = mach_group['SecondGrade'].sum()
             target = mach_group['Target'].sum()
@@ -876,13 +884,12 @@ class DailyReport(Factory):
 
             activation_rows.append(df_activation_row)
 
-            tmp_scrap = scrap_qty / sum_qty if sum_qty > 0 else 0
-            tmp_second = second_qty / sum_qty if sum_qty > 0 else 0
-
             tmp_qty = sum_qty + scrap_qty + second_qty
+            tmp_scrap = scrap_qty / tmp_qty if sum_qty > 0 else 0
+            tmp_second = second_qty / tmp_qty if sum_qty > 0 else 0
             capacity_rate = tmp_qty / target if target > 0 else 0
-            yield_rate = (online_qty - isolation_qty) / tmp_qty if tmp_qty > 0 else 0
-            isolation_rate = isolation_qty / online_qty if online_qty > 0 else 0
+            yield_rate = (sum_qty - isolation_qty) / tmp_qty if tmp_qty > 0 else 0
+            isolation_rate = isolation_qty / tmp_qty if tmp_qty > 0 else 0
             oee_rate = activation_rate * capacity_rate * yield_rate
 
             cosmetic_dpm = self.calculate_cosmetic_dpm(mach_group, cosmetic_df)
@@ -958,23 +965,24 @@ class DailyReport(Factory):
         machines_exceeding_24 = subtotals_df.loc[numeric_production_time > 24, 'Name'].unique()
         if machines_exceeding_24.size > 0:
             for machine in machines_exceeding_24:
-                for normal_msg in self.msg_list:
-                    if machine in normal_msg:
-                        break
-                    else:
-                        self.error_list.append(f"{machine}發生總時數超過24，可能IPQC有用錯RunCard的情況")
+                self.error_list.append(f"{machine}發生總時數超過24，可能IPQC有用錯RunCard的情況")
+
+        # 廢品資料尚未完成輸入
+        machine_qty_sum = fixed_main_df.groupby('Name')['Qty'].sum().reset_index()
+        machine_qty_sum = machine_qty_sum[machine_qty_sum['Qty'] > 0]
+        scrap_zero_df = fixed_main_df[(fixed_main_df['Period'] == 5) & (fixed_main_df['Scrap'] == 0)]['Name'].unique()
+        machine_qty_sum['Scrap_Zero_in_P5'] = machine_qty_sum['Name'].isin(scrap_zero_df)
+
+        for machine, flag in zip(machine_qty_sum['Name'], machine_qty_sum['Scrap_Zero_in_P5']):
+            self.error_list.append(f"{machine} 尚未完成廢品資料輸入")
+
 
         # 判斷是否有用其他方式收貨，要去詢問產線異常原因
         for _, row in fixed_main_df.iterrows():
             if not pd.isna(row['sum_qty']) and not pd.isna(row['Ticket_Qty']):
                 if int(row['sum_qty']) < 100 and int(row['Ticket_Qty']) > 1000:
                     abnormal_machine = row['Name']
-                    # 判斷正常情況不歸屬點數機異常
-                    for normal_msg in self.msg_list:
-                        if abnormal_machine in normal_msg:
-                            break
-                        else:
-                            self.error_list.append(f"{abnormal_machine} 點數機資料與SAP入庫資料差異過大，可能發生用舊點數機的情況")
+                    self.error_list.append(f"{abnormal_machine} 點數機資料與SAP入庫資料差異過大，可能發生用舊點數機的情況")
 
         # 因同時生產兩種尺寸的工單，使用舊點數機人工作業分類，故無法取得正確資料進行計算
         printed_machines = set()
@@ -1017,21 +1025,21 @@ class DailyReport(Factory):
         sheet.add(ColumnControl('Activation', 'right', '0.00%', f'稼動率≥ {self.activation_target*100:g}%', font, hidden=True, width=12, limit=[None, self.activation_target],
                                 comment="點數機(A1B1)生產時間 / 工單預計生產時間"))
         sheet.add(ColumnControl('Capacity', 'right', '0.00%', f'產能效率≥ {self.capacity_target*100:g}%', font, hidden=False, width=12, limit=[None, self.capacity_target],
-                                comment="(點數機數量+二級品數量+廢品數量) / 目標產能"))
+                                comment="(包裝確認量+半成品數量+二級品數量+廢品數量)/目標產能"))
         sheet.add(ColumnControl('Yield', 'right', '0.00%', f'良率≥ {self.yield_target*100:g}%', font, hidden=False, width=10, limit=[None, self.yield_target],
-                                comment="(包裝確認量-隔離品數量) / (點數機數量+二級品數量+廢品數量)"))
+                                comment="(包裝確認量+半成品數量-隔離品數量) / (包裝確認量+半成品數量+二級品數量+廢品數量)"))
         sheet.add(ColumnControl('OEE', 'right', '0.00%', f'OEE≥ {self.oee_target*100:g}%', font, hidden=True, width=10, limit=[None, self.oee_target],
                                 comment="稼動率 x 產能效率 x 良率"))
         sheet.add(ColumnControl('Isolation_Qty', 'right', '#,##0', '隔離品數量', font, hidden=False, width=13,
                                 comment="MES輸入的隔離品數量", comment_width=300))
         sheet.add(ColumnControl('Isolation', 'right', '0.00%', f'隔離品率≤ {round(self.isolation_target*100,2):g}%', font, hidden=False, width=13, limit=[self.isolation_target, None],
-                                comment="隔離品數量 / 包裝確認量"))
+                                comment="隔離品數量/(包裝確認量+半成品數量+二級品數量+廢品數量)"))
 
         sheet.add(ColumnControl('PinholeRate', 'right', '0.00%', f'美醫針孔不良率≤ {round(self.pinhole_target*100,2):g}%', font, hidden=False, width=17, limit=[self.pinhole_target, None]))
         sheet.add(ColumnControl('Scrap', 'right', '0.00%', f'廢品≤ {round(self.scrap_target*100,2):g}%', font, hidden=False, width=13, limit=[self.scrap_target, None],
-                                comment="廢品數量/產量", comment_width=200))
+                                comment="廢品數量/(包裝確認量+半成品數量+二級品數量+廢品數量)", comment_width=200))
         sheet.add(ColumnControl('SecondGrade', 'right', '0.00%', f'二級品≤ {round(self.faulty_target*100,2):g}%', font, hidden=False, width=13, limit=[self.faulty_target, None],
-                                comment="二級品數量/產量", comment_width=200))
+                                comment="二級品數量/(包裝確認量+半成品數量+二級品數量+廢品數量)", comment_width=200))
 
         sheet.add(ColumnControl('OverControl', 'right', '0.00%', f'超內控≤ {round(self.weight_target*100,2):g}%', font, hidden=False, width=13, limit=[self.weight_target, None]))
         sheet.add(ColumnControl('Lost_Mold_Rate', 'center', '0.00%', f'缺模率≤ {round(self.former_miss_target*100,2):g}%', font,
@@ -1325,7 +1333,7 @@ class DailyReport(Factory):
 
         sql = f"""
                           SELECT distinct d.defect_level, d.defect_code, d.defect_code, d.desc1, d.desc2
-                            FROM [MES_OLAP].[dbo].[counting_daily_info_raw] r
+                            FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] r
                             LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_cosmetic_data] cos on r.Runcard = cos.runcard
                             LEFT JOIN [MES_OLAP].[dbo].[mes_defect_define] d on d.defect_code = cos.defect_code
                             where r.belong_to = '{self.report_date1}' and d.defect_type <> ''
@@ -1351,7 +1359,7 @@ class DailyReport(Factory):
 
         sql = f"""
                         SELECT distinct d.defect_code, d.desc1, d.desc2
-                          FROM [MES_OLAP].[dbo].[counting_daily_info_raw] r
+                          FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] r
                           JOIN [MES_OLAP].[dbo].[mes_ipqc_pinhole_data] cos on r.Runcard = cos.runcard
                           JOIN [MES_OLAP].[dbo].[mes_defect_define] d on d.defect_code = cos.defect_code
                           where r.belong_to = '{self.report_date1}'
@@ -1651,14 +1659,20 @@ class DailyReport(Factory):
             print(e)
 
     def calculate_cosmetic_dpm(self, mach_df, cosmetic_df):
-        df = pd.merge(mach_df, cosmetic_df, on=['runcard'], how='left')
-        inspect_total = df['cosmetic_inspect_qty'].sum()
-        sum_qty_total = df['cosmetic_qty'].sum()
+        dpm = None
+        try:
+            df = pd.merge(mach_df, cosmetic_df, on=['runcard'], how='left')
+            df['cosmetic_inspect_qty'] = df['cosmetic_inspect_qty'].replace(r'^\s*$', np.nan, regex=True).fillna(0)
+            df['cosmetic_qty'] = df['cosmetic_qty'].replace(r'^\s*$', np.nan, regex=True).fillna(0)
+            inspect_total = df['cosmetic_inspect_qty'].sum()
+            sum_qty_total = df['cosmetic_qty'].sum()
 
-        if inspect_total > 0:
-            dpm = round(sum_qty_total * 1_000_000 / inspect_total, 0)
-        else:
-            dpm = None  # 或設為 0 或 NaN，視你的需求而定
+            if inspect_total > 0:
+                dpm = round(sum_qty_total * 1_000_000 / inspect_total, 0)
+            else:
+                dpm = None  # 或設為 0 或 NaN，視你的需求而定
+        except Exception as e:
+            print(e)
 
         return dpm
 
@@ -1679,7 +1693,7 @@ class DailyReport(Factory):
     # 缺模率
     def get_lost_mold_rate(self):
         sql = f"""
-        SELECT cd.MES_MACHINE Name, cd.LINE Line, CAST(DATEPART(hour, CreationTime) as INT) Period, round(sum(ModelLostQty) / sum(ModelQty),4) Lost_Mold_Rate
+        SELECT cd.MES_MACHINE Name, cd.LINE Line, CAST(DATEPART(hour, CreationTime) as INT) Period, round(sum(ModelLostQty) / SUM(c.ModelQty+c.ModelLostQty), 4) Lost_Mold_Rate
           FROM [PMG_DEVICE].[dbo].[COUNTING_DATA] c
           JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] cd on c.MachineName = cd.COUNTING_MACHINE
           where ModelLostQty > 0 and ModelLostQty < 1000
@@ -1855,8 +1869,8 @@ report_date1 = report_date1.strftime('%Y%m%d')
 report_date2 = datetime.today()
 report_date2 = report_date2.strftime('%Y%m%d')
 
-# report_date1 = "20250324"
-# report_date2 = "20250325"
+# report_date1 = "20250418"
+# report_date2 = "20250419"
 
 report = mes_daily_report(report_date1, report_date2)
 report.main()

@@ -54,7 +54,7 @@ class Output(object):
     def delete_data(self, plant, report_date):
 
         sql = f"""
-        DELETE FROM counting_daily_info_raw WHERE belong_to = '{report_date}' AND branch = '{plant}'
+        DELETE FROM counting_hourly_info_raw WHERE belong_to = '{report_date}' AND branch = '{plant}'
         """
         print(sql)
         self.mes_olap_db.execute_sql(sql)
@@ -135,8 +135,8 @@ class Output(object):
                     SELECT RunCardId, sum(ActualQty) isolation_qty
                       FROM [PMGMES].[dbo].[PMG_MES_Isolation] i
                       JOIN [PMGMES].[dbo].[PMG_MES_RunCard] r on r.Id = i.RunCardId
-                      WHERE  ((r.InspectionDate = '20250410' AND r.Period BETWEEN 6 AND 23)
-                               OR (r.InspectionDate = '20250411' AND r.Period BETWEEN 0 AND 5))
+                      WHERE  ((r.InspectionDate = '{start_date}' AND r.Period BETWEEN 6 AND 23)
+                               OR (r.InspectionDate = '{end_date}' AND r.Period BETWEEN 0 AND 5))
                     group by RunCardId
                 )
                 
@@ -180,7 +180,7 @@ class Output(object):
 
             fix_sql = f"""
             SELECT WorkDate, Machine, Line, Period, MinSpeed fix_MinSpeed, MaxSpeed fix_MaxSpeed, AvgSpeed fix_AvgSpeed, CountingQty fix_CountingQty, Target fix_Target, StopTime fix_StopTime, RunTime fix_RunTime
-              FROM [MES_OLAP].[dbo].[counting_daily_info_fix]
+              FROM [MES_OLAP].[dbo].[counting_hourly_info_fix]
               WHERE WorkDate between '{start_date}' and '{end_date}'
             """
             print(fix_sql)
@@ -216,10 +216,15 @@ class Output(object):
                 data_df["StdSpeed"] = data_df["StdSpeed"].astype(float)
                 data_df["pitch_rate"] = data_df["pitch_rate"].astype(float)
 
-                data_df["Target"] = (
-                        data_df["Run_time"].fillna(0) *
-                        data_df["StdSpeed"].fillna(0) /
-                        data_df["pitch_rate"].replace(0, np.nan).fillna(1)  # 避免除 0
+                # 建立條件 mask：OnlinePacking 或 WIPPacking 有值（非 NaN 且 > 0）
+                mask = (data_df["OnlinePacking"].fillna(0) > 0) | (data_df["WIPPacking"].fillna(0) > 0)
+
+                # 預設 Target 為 0
+                data_df["Target"] = 0
+
+                # 當條件成立時才計算 Target
+                data_df.loc[mask, "Target"] = (
+                        60 * data_df["StdSpeed"].fillna(0) / data_df["pitch_rate"].replace(0, np.nan).fillna(1)
                 ).replace([np.inf, -np.inf], np.nan).fillna(0).astype(int)
 
                 data_df['WorkOrder'] = data_df['WorkOrder'].fillna('').astype(str)
@@ -295,11 +300,11 @@ class Output(object):
                             else:
                                 belong_to = work_date
 
-                        if belong_to == "2025-04-11":
-                            print(belong_to)
+                        if belong_to == '2025-04-22':
+                            print("xxxx")
 
                         insert_sql = f"""
-                        Insert into counting_daily_info_raw ([Year], Week_No, WorkOrder, WoStartDate, WoEndDate, PartNo, ProductItem, WorkDate, 
+                        Insert into counting_hourly_info_raw ([Year], Week_No, WorkOrder, WoStartDate, WoEndDate, PartNo, ProductItem, WorkDate, 
                         Machine, Line, Shift, Runcard, Period, LowSpeed, UpSpeed, StdSpeed, MinSpeed, MaxSpeed, AvgSpeed,RunTime, StopTime, CountingQty, OnlinePacking, WIPPacking, Target, FaultyQuantity, ScrapQuantity, 
                         StandardAQL, InspectedAQL, create_at, plant, branch, belong_to, CustomerCode, CustomerName, IsolationQty)
                         Values({year}, '{week_no}', '{work_order}','{wo_start_date}','{wo_end_date}','{part_no}','{product_item}','{work_date}',

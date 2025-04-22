@@ -194,8 +194,8 @@ report_date1 = report_date1.strftime('%Y%m%d')
 report_date2 = datetime.today()
 report_date2 = report_date2.strftime('%Y%m%d')
 
-# report_date1 = "20250403"
-# report_date2 = "20250404"
+# report_date1 = "20250418"
+# report_date2 = "20250419"
 
 ipqc = MES_IPQC_SUMMARY(report_date1, report_date2)
 ipqc.main()

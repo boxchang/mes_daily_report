@@ -59,7 +59,7 @@ class mes_weekly_report(object):
              and enable = 1
         """
 
-        raws = self.vnedc_db.select_sql_dict(sql)
+        raws = self.mes_olap_db.select_sql_dict(sql)
 
         return raws[0]
 
@@ -70,6 +70,8 @@ class mes_weekly_report(object):
         self.config = ConfigObject(config_file, mail_config_file)
 
         SetReportLog()
+
+        logging.info(f"Location {self.config.location} ......")
 
         if self.config.location in "GD":
             self.mes_db = mes_database()
@@ -84,7 +86,7 @@ class mes_weekly_report(object):
             self.mes_olap_db = None
             self.vnedc_db = None
 
-        week_date = Utils().get_week_date_dist(self.vnedc_db)
+        week_date = Utils().get_week_date_dist(self.mes_olap_db)
         # week_date = self.get_week_date_df_fix()
         self.this_end_date = week_date['end_date']
         self.this_start_date = week_date['start_date']
@@ -186,7 +188,10 @@ class mes_weekly_report(object):
             image_buffer = dr.generate_chart(summary_chart_dict)
             image_buffers.append(image_buffer)
 
-            image_buffer = dr.rate_chart(scrap_chart_dict)
+            if 'PVC' in plant:
+                image_buffer = dr.rate_chart(scrap_chart_dict)
+            if 'NBR' in plant:
+                image_buffer = dr.rate_chart2(scrap_chart_dict)
             image_buffers.append(image_buffer)
 
         if not fix_mode:
@@ -224,9 +229,12 @@ class WeeklyReport(Factory):
 
         if 'NBR' in self.plant:
             self.plant_ = 'NBR'
+            self.scrap_target = 0.9
+            self.capacity = 0.97
         elif 'PVC' in self.plant:
             self.plant_ = 'PVC1'
-
+            self.scrap_target = 0.3
+            self.capacity = 0.97
     def get_mach_list(self):
         start_time = time.time()
 
@@ -260,7 +268,7 @@ class WeeklyReport(Factory):
                                         CASE WHEN Weight_Defect IS NULL THEN NULL WHEN Weight_Defect = 'LL1' THEN 'NG' ELSE 'PASS' END AS Weight_Heavy,
                                         Width_Value,Width_Limit,Width_Status,
                                         Pinhole_Value,Pinhole_Limit,Pinhole_Status
-                                        FROM [MES_OLAP].[dbo].[counting_daily_info_raw] c
+                                        FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] c
                                         left join [MES_OLAP].[dbo].[week_date] wd
                                         on c.Week_No = wd.week_no
                                         LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on c.Runcard = ipqc.Runcard
@@ -271,7 +279,7 @@ class WeeklyReport(Factory):
                                         order by Machine, WorkDate, Cast(Period as Int), Line
                                         """
 
-        data = self.vnedc_db.select_sql_dict(sql)
+        data = self.mes_olap_db.select_sql_dict(sql)
         df = pd.DataFrame(data)
 
         # 設定IPQC欄位判斷條件
@@ -295,17 +303,17 @@ class WeeklyReport(Factory):
         # region Summary Achievement Chart
         # Target只看有做IPQC的部分
         sql = f"""SELECT Machine name,
-                        sum(case when cast(belong_to as date) between '{this_start_date}' and '{this_end_date}' then OnlinePacking else 0 end) as this_time,
+                        sum(case when cast(belong_to as date) between '{this_start_date}' and '{this_end_date}' then OnlinePacking+WIPPacking else 0 end) as this_time,
                         sum(case when cast(belong_to as date) between '{this_start_date}' and '{this_end_date}' then Target else 0 end) as target_this_time,
                         (sum(case when cast(belong_to as date) between '{this_start_date}' and '{this_end_date}' then Target else 0 end) -
-                        sum(case when cast(belong_to as date) between '{this_start_date}' and '{this_end_date}' then OnlinePacking else 0 end)) as this_unfinish
-                        FROM [MES_OLAP].[dbo].[counting_daily_info_raw] c
+                        sum(case when cast(belong_to as date) between '{this_start_date}' and '{this_end_date}' then OnlinePacking+WIPPacking else 0 end)) as this_unfinish
+                        FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] c
                         JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on c.Runcard = ipqc.Runcard
                         where Machine like '%{self.plant}%' and not (WorkOrder != '' and InspectedAQL ='')
                         and Weight_Value > 0  and CountingQty > 100
                         group by Machine
                         order by Machine"""
-        summary_chart_dict = self.vnedc_db.select_sql_dict(sql)
+        summary_chart_dict = self.mes_olap_db.select_sql_dict(sql)
         # endregion
 
         # region Separation
@@ -313,8 +321,8 @@ class WeeklyReport(Factory):
                                 SELECT Machine name, WorkDate, 
                                        CAST(ScrapQuantity AS FLOAT) AS Scrap, 
                                        CAST(FaultyQuantity AS FLOAT) AS SecondGrade,
-                                       CAST(CountingQty as Float) as sum_qty
-                                FROM [MES_OLAP].[dbo].[counting_daily_info_raw]
+                                       OnlinePacking+WIPPacking+ScrapQuantity+FaultyQuantity as sum_qty
+                                FROM [MES_OLAP].[dbo].[counting_hourly_info_raw]
                                 WHERE belong_to between '{this_start_date}' AND '{this_end_date}'
                             )
                             SELECT 
@@ -327,7 +335,7 @@ class WeeklyReport(Factory):
                             GROUP BY name
                             ORDER BY name;
                         """
-        data2 = self.vnedc_db.select_sql_dict(sql)
+        data2 = self.mes_olap_db.select_sql_dict(sql)
         scrap_chart_dict = {item['name']: item for item in data2}
         # endregion
 
@@ -342,7 +350,7 @@ class WeeklyReport(Factory):
 
         sql = f"""    
                       SELECT counting.Runcard runcard,counting.belong_to,counting.Machine,counting.Line,counting.Shift,counting.WorkOrder,counting.PartNo,counting.ProductItem,SalePlaceCode,counting.Period
-                      FROM [MES_OLAP].[dbo].[counting_daily_info_raw] counting
+                      FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] counting
                       LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on ipqc.Runcard = counting.Runcard
                       LEFT JOIN [MES_OLAP].[dbo].[sap_customer_define] cus on cus.CustomerCode = counting.CustomerCode
                       where counting.Year = {self.year} and counting.Week_No = '{self.week_no}'
@@ -351,7 +359,7 @@ class WeeklyReport(Factory):
                       order by Machine, WorkDate, Cast(Period as Int)
 
                     """
-        data = self.vnedc_db.select_sql_dict(sql)
+        data = self.mes_olap_db.select_sql_dict(sql)
         df = pd.DataFrame(data)
 
         weight_sql = f"""
@@ -359,7 +367,7 @@ class WeeklyReport(Factory):
                         ipqc.Runcard AS runcard, 
                         CAST(SalePlaceCode AS VARCHAR) + Weight_Defect AS defect_code, 
                         1 AS qty
-                    FROM [MES_OLAP].[dbo].[counting_daily_info_raw] counting
+                    FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] counting
                     LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc ON ipqc.Runcard = counting.Runcard
                     LEFT JOIN [MES_OLAP].[dbo].[sap_customer_define] cus ON cus.CustomerCode = counting.CustomerCode
                     WHERE counting.Year = {self.year}
@@ -388,7 +396,7 @@ class WeeklyReport(Factory):
                     ) AS supplement(sale_place_code, defect_code)
                     WHERE NOT EXISTS (
                         SELECT 1
-                        FROM [MES_OLAP].[dbo].[counting_daily_info_raw] counting
+                        FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] counting
                         LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc ON ipqc.Runcard = counting.Runcard
                         LEFT JOIN [MES_OLAP].[dbo].[sap_customer_define] cus ON cus.CustomerCode = counting.CustomerCode
                         WHERE counting.Year = {self.year}
@@ -405,7 +413,7 @@ class WeeklyReport(Factory):
                       --LL1 過重
                       --LL2 過輕
                     """
-        weight_data = self.vnedc_db.select_sql_dict(weight_sql)
+        weight_data = self.mes_olap_db.select_sql_dict(weight_sql)
         weight_df = pd.DataFrame(weight_data)
 
         weight_df = weight_df.pivot(index="runcard", columns="defect_code", values="qty").reset_index()
@@ -422,13 +430,13 @@ class WeeklyReport(Factory):
 
         cosmetic_sql = f"""
                      SELECT r.runcard, d.defect_code, sum(qty) cosmetic_qty,  max(cos.cosmetic_inspect_qty) cosmetic_inspect_qty
-                      FROM [MES_OLAP].[dbo].[counting_daily_info_raw] r
+                      FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] r
                       LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_cosmetic_data] cos on r.Runcard = cos.runcard
                       LEFT JOIN [MES_OLAP].[dbo].[mes_defect_define] d on d.defect_code = cos.defect_code
                       where r.Year = {self.year} and r.Week_No = '{self.week_no}' and r.runcard <> ''
                       group by r.runcard, defect_level, d.defect_type, d.defect_code, desc2
                     """
-        cosmetic_data = self.vnedc_db.select_sql_dict(cosmetic_sql)
+        cosmetic_data = self.mes_olap_db.select_sql_dict(cosmetic_sql)
         cosmetic_sample_df = pd.DataFrame(cosmetic_data)
 
         cosmetic_summary_df = cosmetic_sample_df.groupby('runcard', as_index=False).agg({
@@ -441,13 +449,13 @@ class WeeklyReport(Factory):
         # 計算針孔Defect Code加總
         pinhole_sql = f"""
                     SELECT r.runcard, d.defect_code, sum(qty) sum_qty
-                      FROM [MES_OLAP].[dbo].[counting_daily_info_raw] r
+                      FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] r
                       JOIN [MES_OLAP].[dbo].[mes_ipqc_pinhole_data] cos on r.Runcard = cos.runcard
                       JOIN [MES_OLAP].[dbo].[mes_defect_define] d on d.defect_code = cos.defect_code
                       where r.Year = {self.year} and r.Week_No = '{self.week_no}'
                       group by r.runcard, defect_level, d.defect_code, desc2
                     """
-        pinhole_data = self.vnedc_db.select_sql_dict(pinhole_sql)
+        pinhole_data = self.mes_olap_db.select_sql_dict(pinhole_sql)
         pinhole_df = pd.DataFrame(pinhole_data)
         pinhole_pivot_df = pinhole_df.pivot(index="runcard", columns="defect_code", values="sum_qty").reset_index()
         pinhole_pivot_df['Pinhole'] = pinhole_pivot_df.iloc[:, 1:-1].notna().any(axis=1).astype(int)
@@ -748,7 +756,7 @@ class WeeklyReport(Factory):
                       where Plant = '{self.plant}' and w.enable = 1
                       order by CAST(w.week_no AS Int)
                     """
-        cosmetic_summary_data = self.vnedc_db.select_sql_dict(cosmetic_summary_sql)
+        cosmetic_summary_data = self.mes_olap_db.select_sql_dict(cosmetic_summary_sql)
         df = pd.DataFrame(cosmetic_summary_data)
 
         df = df.rename(columns=header_columns)
@@ -795,7 +803,7 @@ class WeeklyReport(Factory):
 
         sql = f"""
                   SELECT distinct d.defect_level, d.defect_code, d.defect_code, d.desc1, d.desc2
-                    FROM [MES_OLAP].[dbo].[counting_daily_info_raw] r
+                    FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] r
                     LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_cosmetic_data] cos on r.Runcard = cos.runcard
                     LEFT JOIN [MES_OLAP].[dbo].[mes_defect_define] d on d.defect_code = cos.defect_code
                     where r.Year = {self.year} and r.Week_No = '{self.week_no}' and d.defect_type <> ''
@@ -820,7 +828,7 @@ class WeeklyReport(Factory):
 
         sql = f"""
                 SELECT distinct d.defect_code, d.desc1, d.desc2
-                  FROM [MES_OLAP].[dbo].[counting_daily_info_raw] r
+                  FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] r
                   JOIN [MES_OLAP].[dbo].[mes_ipqc_pinhole_data] cos on r.Runcard = cos.runcard
                   JOIN [MES_OLAP].[dbo].[mes_defect_define] d on d.defect_code = cos.defect_code
                   where r.Year = {self.year} and r.Week_No = '{self.week_no}'
@@ -1019,7 +1027,7 @@ class WeeklyReport(Factory):
         DELETE FROM [MES_OLAP].[dbo].[appearance_weekly_info_raw]
         WHERE Plant = '{self.plant}' AND [Year] = {self.year} AND Week_No = '{self.week_no}'
         """
-        self.vnedc_db.execute_sql(delete_sql)
+        self.mes_olap_db.execute_sql(delete_sql)
 
         insert_sql = f"""
         INSERT INTO [MES_OLAP].[dbo].[appearance_weekly_info_raw] (Plant, Year, Week_No, 
@@ -1039,7 +1047,7 @@ class WeeklyReport(Factory):
         {sum_major}, {major_rate}, {major_dpm}, {sum_minor}, {minor_rate}, {minor_dpm}, {sum_pinhole}, {pinhole_rate}, {pinhole_dpm},
         {sum_inspect_qty}, null)
         """
-        self.vnedc_db.execute_sql(insert_sql)
+        self.mes_olap_db.execute_sql(insert_sql)
         # endregion
 
         end_time = time.time()
@@ -1067,19 +1075,20 @@ class WeeklyReport(Factory):
         sheet.add(ColumnControl('ScrapRate', 'center', '0.00%', '廢品率', font, hidden=False, width=11))
         sheet.add(ColumnControl('Target', 'center', '#,##0', '目標產能', font, hidden=False, width=13))
         sheet.add(ColumnControl('OnlinePacking', 'center', '#,##0', '包裝確認量', font, hidden=False, width=13))
-        sheet.add(ColumnControl('Gap', 'center', '#,##0', '目標產能', font, hidden=False, width=13))
+        sheet.add(ColumnControl('WIPPacking', 'center', '#,##0', '半成品入庫量', font, hidden=False, width=13))
+        sheet.add(ColumnControl('Gap', 'center', '#,##0', '目標差異', font, hidden=False, width=13))
 
         sql = f"""
             SELECT [Plant], r.Year, w.week_no Week_No
               ,[CountingQty],[IsolationQty] IsolationQuantity,[AvgSpeed]
               ,[Capacity],[Yield],[Activation]
-              ,[OEE],[IsolationRate],[ScrapRate],[Target],[OnlinePacking], Target-OnlinePacking Gap
+              ,[OEE],[IsolationRate],[ScrapRate],[Target],[OnlinePacking], [WIPPacking], Target-OnlinePacking-WIPPacking Gap
           FROM [MES_OLAP].[dbo].[counting_weekly_info_raw] r
           JOIN [MES_OLAP].[dbo].[week_date] w on r.Year = w.year and r.Week_No = w.week_no
           where Plant = '{self.plant}' and w.enable = 1
           Order by CAST(w.week_no AS Int)
         """
-        data = self.vnedc_db.select_sql_dict(sql)
+        data = self.mes_olap_db.select_sql_dict(sql)
         df = pd.DataFrame(data)
 
         header_columns = sheet.header_columns
@@ -1133,7 +1142,7 @@ class WeeklyReport(Factory):
                     allTime = filtered_df['AllTime'].sum()
                     avgSpeed = round(filtered_df['StdSpeed'].mean(), 0)
                     target = filtered_df['Target'].sum()
-                    rate = round((int(onlinePacking) / int(target)), 3) if int(target) > 0 else 0
+                    rate = round(((int(onlinePacking)+int(wipPacking)) / int(target)), 3) if int(target) > 0 else 0
 
                     summary_row = {
                         'Name': machine_name,
@@ -1175,15 +1184,15 @@ class WeeklyReport(Factory):
             # 稼動率allTime必須扣除計劃性停機時間
             # activation = round(runTime/allTime, 3) if int(allTime) > 0 else 0
             activation = ''
-            output = countingQty + faultyQty + scrapQty
+            output = onlinePacking + wipPacking + faultyQty + scrapQty
             capacity = round(output / target, 3) if int(target) > 0 else 0
-            _yield = round((onlinePacking - isolationQty) / output, 3) if int(output) > 0 else 0
+            _yield = round((onlinePacking + wipPacking - isolationQty) / output, 3) if int(output) > 0 else 0
 
             # 等有稼動率才能做OEE
             # oee = round(activation * capacity * _yield, 3)
             oee = ''
-            rate = round(onlinePacking / target, 3) if int(target) > 0 else 0
-            isolationRate = round(isolationQty / onlinePacking, 3) if int(onlinePacking) > 0 else 0
+            rate = round((onlinePacking+wipPacking) / target, 3) if int(target) > 0 else 0
+            isolationRate = round(isolationQty / output, 3) if int(output) > 0 else 0
 
             summary_data.append({'Name': machine_name, 'Date': tmp_week, 'Shift': '', 'Line': '',
                                  'CountingQty': countingQty, 'FaultyQuantity': faultyQty, 'ScrapQuantity': scrapQty,
@@ -1219,7 +1228,7 @@ class WeeklyReport(Factory):
                                 comment="車速標準下限~車速標準上限+2%", comment_width=200))
 
         sheet.add(ColumnControl('CountingQty', 'right', '#,##0', '生產總量', font, hidden=False, width=13, level=1,
-                                comment="點數機數量", comment_width=200))
+                                comment="點數機數量", comment_width=400))
 
         sheet.add(ColumnControl('OnlinePacking', 'right', '#,##0', '包裝確認量', font, hidden=False, width=13, level=1))
         sheet.add(ColumnControl('WIPPacking', 'right', '#,##0', '半成品入庫量', font, hidden=False, width=13, level=1))
@@ -1228,27 +1237,27 @@ class WeeklyReport(Factory):
         sheet.add(ColumnControl('ScrapQuantity', 'right', '#,##0', '廢品數量', font, hidden=False, width=13, level=1))
         sheet.add(ColumnControl('FaultyQuantity', 'right', '#,##0', '二級品數量', font, hidden=False, width=13, level=1))
         sheet.add(ColumnControl('Target', 'right', '#,##0', '目標產能', font, hidden=False, width=10,
-                                comment="生產時間(IPQC) * (標準車速上限/節距調整值)", comment_width=600, level=1))
+                                comment="生產時間(IPQC) * (標準車速上限/節距調整值)", comment_width=700, level=1))
 
         sheet.add(ColumnControl('Achievement Rate', 'right', '0.00%', '目標達成率', font, hidden=False, width=10,
-                                comment="包裝確認量 / 目標產能", comment_width=600))
+                                comment="包裝確認量+半成品入庫量/目標產能", comment_width=700))
 
         sheet.add(ColumnControl('RunTime', 'right', '#,##0', '實際運轉時間', font, hidden=True, width=11))
         sheet.add(ColumnControl('AllTime', 'right', '#,##0', '可運轉時間', font, hidden=True, width=11))
 
         sheet.add(ColumnControl('Activation', 'right', '0.00%', '稼動率', font, hidden=True, width=10,
-                                comment="有做IPQC的機台實際運轉時間 / (可運轉時間-計劃性停機時間)", comment_width=600))
+                                comment="有做IPQC的機台實際運轉時間/(可運轉時間-計劃性停機時間)", comment_width=700))
 
         sheet.add(ColumnControl('Capacity', 'right', '0.00%', '產能效率', font, hidden=False, width=10,
-                                comment="(點數機數量+二級品數量+廢品數量) / 目標產能", comment_width=600))
+                                comment="(包裝確認量+半成品入庫量+二級品數量+廢品數量) / 目標產能", comment_width=700))
         sheet.add(ColumnControl('Yield', 'right', '0.00%', '良率', font, hidden=False, width=10,
-                                comment="(包裝確認量-隔離品數量)/(點數機數量+二級品數量+廢品數量)", comment_width=600))
+                                comment="(包裝確認量+半成品入庫量-隔離品數量)/(包裝確認量+半成品入庫量+二級品數量+廢品數量)", comment_width=700))
 
         sheet.add(ColumnControl('OEE', 'right', '0.00%', 'OEE', font, hidden=True, width=10,
                                 comment="稼動率 * 產能效率 * 良率", comment_width=600))
 
         sheet.add(ColumnControl('IsolationRate', 'right', '0.00%', '隔離率', font, hidden=False, width=10,
-                                comment="隔離品數量 / 包裝確認量", comment_width=600))
+                                comment="隔離品數量/(包裝確認量+半成品入庫量+二級品數量+廢品數量)", comment_width=700))
 
 
 
@@ -1335,7 +1344,7 @@ class WeeklyReport(Factory):
         fig, ax1 = plt.subplots(figsize=(16, 9))
 
         this_week_bars = ax1.bar([i for i in x_range], this_data, width=bar_width,
-                                 label=f"包裝確認量",
+                                 label=f"入庫量",
                                  align='center', color='#10ba81')
         unfinish_bars = ax1.bar([i for i in x_range], this_unfinish, width=bar_width, bottom=this_data,
                                 label=f"週目標差異",
@@ -1382,6 +1391,8 @@ class WeeklyReport(Factory):
                                   label=sr_achieve_rate,
                                   color='#ED7D31', marker='o', linewidth=1.5)
 
+        target_rate = self.capacity*100
+
         # Label Name
         sr_target = "達成率目標%"
         # Chart Label
@@ -1390,12 +1401,6 @@ class WeeklyReport(Factory):
 
         name = self.date_mark
         title = f"\n{self.plant} {self.year} 第{self.week_no}週 ({name})目標達成率\n"
-
-        # Achievement Rate Standard Line
-        if "NBR" in self.plant:
-            target_rate = 95
-        elif "PVC" in self.plant:
-            target_rate = 98
 
         yticks_positions = list(range(0, rounded_max_rate + 1 * rounded_step_rate, rounded_step_rate))
         if target_rate not in yticks_positions:
@@ -1414,13 +1419,30 @@ class WeeklyReport(Factory):
         ax2.set_ylabel('Archive rates', fontsize=12)
 
         for i, value in enumerate(this_rate):
-            ax2.text(
-                x_range[i],
-                value + 1.5,
-                f"{value:.1f}%" if value != 0 else '',
-                ha='center', va='bottom', fontsize=12, color='white',
-                bbox=dict(facecolor='#ED7D31', edgecolor='none', boxstyle='round,pad=0.3')
-            )
+            if value > 0 and value < target_rate:
+                ax2.text(
+                    x_range[i],
+                    value + 1.5,
+                    f"{value:.1f}%",
+                    ha='center', va='bottom', fontsize=12, color='white',
+                    bbox=dict(facecolor='#ED7D31', edgecolor='none', boxstyle='round,pad=0.3')
+                )
+
+                ax2.text(
+                    x_range[i],
+                    value + 1.5,
+                    f"{value:.1f}%",
+                    ha='center', va='bottom', fontsize=12, color='white',
+                    bbox=dict(facecolor='none', edgecolor='red', boxstyle='circle,pad=1.5', linewidth=2)
+                )
+            else:
+                ax2.text(
+                    x_range[i],
+                    value + 1.5,
+                    f"{value:.1f}%" if value != 0 else '',
+                    ha='center', va='bottom', fontsize=12, color='white',
+                    bbox=dict(facecolor='#ED7D31', edgecolor='none', boxstyle='round,pad=0.3')
+                )
 
         handles1, labels1 = ax1.get_legend_handles_labels()
         handles2, labels2 = ax2.get_legend_handles_labels()
@@ -1447,7 +1469,7 @@ class WeeklyReport(Factory):
         ax1.annotate(
             '',
             xy=(0, 1.0),
-            xytext=(0, 0.98),
+            xytext=(0, 0.97),
             xycoords='axes fraction',
             arrowprops=dict(facecolor='black', arrowstyle='-|>,widthA=0.4,widthB=1.4', linewidth=0.5)
         )
@@ -1461,7 +1483,7 @@ class WeeklyReport(Factory):
         ax2.annotate(
             '',
             xy=(1, 1.0),
-            xytext=(1, 0.98),
+            xytext=(1, 0.97),
             xycoords='axes fraction',
             arrowprops=dict(facecolor='black', arrowstyle='-|>,widthA=0.4,widthB=1.4', linewidth=0.5)
         )
@@ -1538,7 +1560,7 @@ class WeeklyReport(Factory):
         ax1 = fig.add_subplot(gs[0])
         ax1.plot(filtered_x_scrap, filtered_scrap, label="廢品率 (%)", marker='o', linestyle='-', color='#ED7D31',
                  linewidth=2)
-        ax1.axhline(y=0.8, color='#ED7D31', linestyle='--', linewidth=1.5, label="廢品標準線(0.8)")
+        ax1.axhline(y=self.scrap_target, color='#ED7D31', linestyle='--', linewidth=1.5, label=f"廢品標準線({self.scrap_target})")
         ax1.set_xticks(x_range)
         ax1.set_xticklabels([])  # Hide x-axis labels for the top plot
         # ax1.set_ylabel('廢品率 (%)', fontsize=12, rotation=0)
@@ -1585,6 +1607,98 @@ class WeeklyReport(Factory):
         fig.legend(
             handles1 + handles2,
             labels1 + labels2,
+            loc='center left',
+            fontsize=10,
+            title="Note",
+            title_fontsize=12,
+            bbox_to_anchor=(1.0, 0.5),
+            ncol=1
+        )
+
+        plt.tight_layout()
+
+        file_name = f'MES_{self.location}_{self.plant}_{self.date_mark}_Rate_Chart_Line.png'
+        chart_img = os.path.join(save_path, file_name)
+
+        plt.savefig(chart_img, dpi=100, bbox_inches="tight", pad_inches=0.45)
+        plt.close()
+
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        self.logging.info(f"Time taken: {elapsed_time:.2f} seconds.")
+
+        return chart_img
+
+    def rate_chart2(self, scrap_dict):
+        start_time = time.time()
+
+        save_path = self.save_path
+
+        data1 = self.mach_list
+
+        data = []
+        for item in data1:
+            name = item['name']
+            if name in scrap_dict:
+                data.append(scrap_dict[name])
+            else:
+                data.append({'name': name, 'scrap': 0, 'secondgrade': 0, 'sum_qty': 0})
+
+        x_labels = [str(item['name']).split('_')[-1] for item in data]
+        x_range = range(len(x_labels))
+
+        scrap = [round((item['scrap'] / (item['sum_qty'] + item['scrap'] + item['secondgrade'])) * 100, 2) if item[
+                                                                                                                  'sum_qty'] > 0 else 0
+                 for item in data]
+
+        # 過濾 scrap 數據
+        filtered_x_scrap, filtered_scrap = self.filter_valid_data(x_range, scrap)
+
+        # Create the figure and subplots
+        plt.figure(figsize=(16, 5))
+        fig, ax1 = plt.subplots(figsize=(16, 5))
+
+        # Subplot for scrap
+        y_max1 = 4
+        y_ticks = np.arange(0, y_max1, 0.4)  # 分成10個刻度
+        y_ticks = y_ticks[:-1]
+
+        ax1.plot(filtered_x_scrap, filtered_scrap, label="廢品率 (%)", marker='o', linestyle='-', color='#ED7D31',
+                 linewidth=2)
+        ax1.axhline(y=self.scrap_target, color='#ED7D31', linestyle='--', linewidth=1.5, label=f"廢品標準線({self.scrap_target})")
+        ax1.set_xticks(x_range)
+        ax1.set_xticklabels(x_labels, rotation=0, ha="center", fontsize=12)
+
+        # ax1.set_ylabel('廢品率 (%)', fontsize=12, rotation=0)
+        ax1.text(-0.1, 0.6, '廢品率 (%)', fontsize=12, rotation=0, ha='center', va='center', transform=ax1.transAxes)
+        ax1.set_ylim(0, y_max1)
+        ax1.set_yticks(y_ticks)
+        ax1.yaxis.set_major_formatter(FuncFormatter(self.add_percent))
+
+        offset = 0.03
+        for i, scrap_val in enumerate(filtered_scrap):
+            x = filtered_x_scrap[i]
+            y = scrap_val + offset
+            text_str = f"{scrap_val:.2f}%"
+
+            # 畫主文字
+            ax1.text(
+                x, y, text_str,
+                ha='center', va='bottom',
+                fontsize=12,
+                color='#ED7D31'
+            )
+
+
+        # Add a title for the entire figure
+        fig.suptitle(f"廢品率 ({self.plant})", fontsize=20)
+
+        # Add legend for both plots
+        handles1, labels1 = ax1.get_legend_handles_labels()
+
+        fig.legend(
+            handles1,
+            labels1,
             loc='center left',
             fontsize=10,
             title="Note",
@@ -1680,7 +1794,7 @@ class WeeklyReport(Factory):
         start_time = time.time()
 
         data1 = self.mach_list
-        matplotlib.rcParams['font.family'] = self.report_font
+        matplotlib.rcParams['font.family'] = ['Microsoft YaHei']
         matplotlib.rcParams['axes.unicode_minus'] = False
 
         for machine in data1:
@@ -1704,7 +1818,7 @@ class WeeklyReport(Factory):
                     start_date = date(2024, 9, 30)
                     start_week_number = 40
 
-                x_labels, week_date = Utils().generate_previous_weeks_with_dates(self.report_date2)
+                x_labels, week_date = Utils().generate_previous_weeks_with_dates(self.mes_olap_db, self.report_date2)
 
                 for i, item in enumerate(week_date):
                     week_name = 'W' + x_labels[i]
@@ -1718,9 +1832,9 @@ class WeeklyReport(Factory):
                     sql = f"""
                                 SELECT name,qty, target, (case when target-qty > 0 then target-qty else 0 end) unfinish_qty FROM 
                                 (
-                                        SELECT Machine name, SUM(OnlinePacking) AS qty,
+                                        SELECT Machine name, SUM(OnlinePacking)+SUM(WIPPacking) AS qty,
                                         SUM(Target) AS target
-                                        FROM [MES_OLAP].[dbo].[counting_daily_info_raw] c
+                                        FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] c
                                         JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on c.Runcard = ipqc.Runcard
                                         WHERE Machine = '{machine['name']}'
                                         AND Weight_Value > 0
@@ -1729,7 +1843,7 @@ class WeeklyReport(Factory):
                                 ) A
                                 """
                     # print(sql)
-                    data_dict = self.vnedc_db.select_sql_dict(sql)
+                    data_dict = self.mes_olap_db.select_sql_dict(sql)
 
                     if len(data_dict) == 0:
                         this_data.append(0)
@@ -1941,6 +2055,7 @@ class WeeklyReport(Factory):
         isolation_sum = df["IsolationQuantity"].sum()
         target_sum = df["Target"].sum()
         onlinePacking_sum = df["OnlinePacking"].sum()
+        wipPacking_sum = df["WIPPacking"].sum()
         faulty_sum = df["FaultyQuantity"].sum()
         scrap_sum = df["ScrapQuantity"].sum()
 
@@ -1958,9 +2073,9 @@ class WeeklyReport(Factory):
 
         sql = f"""
         Insert into [MES_OLAP].[dbo].[counting_weekly_info_raw](Plant, [Year], Week_No, CountingQty, IsolationQty, AvgSpeed, 
-        Activation, Capacity, Yield, OEE, IsolationRate, ScrapRate, Target, OnlinePacking)
+        Activation, Capacity, Yield, OEE, IsolationRate, ScrapRate, Target, OnlinePacking, WIPPacking)
         Values('{self.plant}', {self.year}, '{self.week_no}', {counting_sum}, {isolation_sum}, {speed_avg}, 
-        {activation_avg}, {capacity_avg},{yield_avg},{oee_avg},{isolation_rate},{scrap_rate},{target_sum},{onlinePacking_sum})
+        {activation_avg}, {capacity_avg},{yield_avg},{oee_avg},{isolation_rate},{scrap_rate},{target_sum},{onlinePacking_sum},{wipPacking_sum})
         """
         self.mes_olap_db.execute_sql(sql)
 

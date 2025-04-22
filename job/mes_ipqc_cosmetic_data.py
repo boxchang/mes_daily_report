@@ -120,8 +120,8 @@ class MES_IPQC_COSMETIC(object):
 report_date1 = datetime.today() - timedelta(days=1)
 report_date1 = report_date1.strftime('%Y%m%d')
 report_date2 = report_date1
-# report_date1 = '20250304'
-# report_date2 = '20250305'
+# report_date1 = '20250418'
+# report_date2 = '20250419'
 
 obj = MES_IPQC_COSMETIC(report_date1, report_date2)
 obj.convert()
