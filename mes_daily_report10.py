@@ -596,7 +596,7 @@ class DailyReport(Factory):
         final_df = pd.merge(final_df, df_lost_mold, on=['Name', 'Period', 'Line'], how='left')
 
         final_df['OverControlQty'] = final_df.apply(
-            lambda row: row['sum_qty'] if row['Weight_Status'] == 'NG' else 0, axis=1)
+            lambda row: row['Ticket_Qty'] if row['Weight_Status'] == 'NG' else 0, axis=1)
 
         cosmetic_df = self.get_df_cosmetic()
 
