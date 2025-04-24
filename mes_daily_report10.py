@@ -970,19 +970,20 @@ class DailyReport(Factory):
         # 廢品資料尚未完成輸入
         machine_qty_sum = fixed_main_df.groupby('Name')['Qty'].sum().reset_index()
         machine_qty_sum = machine_qty_sum[machine_qty_sum['Qty'] > 0]
-        scrap_zero_df = fixed_main_df[(fixed_main_df['Period'] == 5) & (fixed_main_df['Scrap'] == 0)]['Name'].unique()
-        machine_qty_sum['Scrap_Zero_in_P5'] = machine_qty_sum['Name'].isin(scrap_zero_df)
+        scrap_df = fixed_main_df[(fixed_main_df['Period'] == 5) & (fixed_main_df['Scrap'] > 0)]['Name'].unique()
+        machine_qty_sum['Scrap_Zero_in_P5'] = ~machine_qty_sum['Name'].isin(scrap_df)
 
         for machine, flag in zip(machine_qty_sum['Name'], machine_qty_sum['Scrap_Zero_in_P5']):
-            self.error_list.append(f"{machine} 尚未完成廢品資料輸入")
+            if flag:
+                self.msg_list.append(f"{machine} 尚未完成廢品資料輸入")
 
 
-        # 判斷是否有用其他方式收貨，要去詢問產線異常原因
-        for _, row in fixed_main_df.iterrows():
-            if not pd.isna(row['sum_qty']) and not pd.isna(row['Ticket_Qty']):
-                if int(row['sum_qty']) < 100 and int(row['Ticket_Qty']) > 1000:
-                    abnormal_machine = row['Name']
-                    self.error_list.append(f"{abnormal_machine} 點數機資料與SAP入庫資料差異過大，可能發生用舊點數機的情況")
+        # # 判斷是否有用其他方式收貨，要去詢問產線異常原因
+        # for _, row in fixed_main_df.iterrows():
+        #     if not pd.isna(row['sum_qty']) and not pd.isna(row['Ticket_Qty']):
+        #         if int(row['sum_qty']) < 100 and int(row['Ticket_Qty']) > 1000:
+        #             abnormal_machine = row['Name']
+        #             self.error_list.append(f"{abnormal_machine} 點數機資料與SAP入庫資料差異過大，可能發生用舊點數機的情況")
 
         # 因同時生產兩種尺寸的工單，使用舊點數機人工作業分類，故無法取得正確資料進行計算
         printed_machines = set()
