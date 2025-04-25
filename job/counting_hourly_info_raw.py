@@ -300,9 +300,6 @@ class Output(object):
                             else:
                                 belong_to = work_date
 
-                        if belong_to == '2025-04-22':
-                            print("xxxx")
-
                         insert_sql = f"""
                         Insert into counting_hourly_info_raw ([Year], Week_No, WorkOrder, WoStartDate, WoEndDate, PartNo, ProductItem, WorkDate, 
                         Machine, Line, Shift, Runcard, Period, LowSpeed, UpSpeed, StdSpeed, MinSpeed, MaxSpeed, AvgSpeed,RunTime, StopTime, CountingQty, OnlinePacking, WIPPacking, Target, FaultyQuantity, ScrapQuantity, 
