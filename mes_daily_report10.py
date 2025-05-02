@@ -491,7 +491,7 @@ class DailyReport(Factory):
           and Weight_Status = 'NG'
           and Machine like '%{self.plant}%'
           and InspectedAQL is not Null
-          and cus.CustomerCode is not null
+          and cus.customer_code is not null
 
           --6100 美
           --6200 歐

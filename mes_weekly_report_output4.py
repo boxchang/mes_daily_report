@@ -348,11 +348,16 @@ class WeeklyReport(Factory):
     def generate_cosmetic_data(self):
         start_time = time.time()
 
-        sql = f"""    
+        sql = f"""
+                      WITH Customer AS (
+                      SELECT CAST(CAST(KUNNR AS BIGINT) AS VARCHAR(50)) customer_code,SORTL customer_name,[VKBUR] SalePlaceCode
+                      FROM [PMG_SAP].[dbo].[ZKNA1]
+                      )
+                                      
                       SELECT counting.Runcard runcard,counting.belong_to,counting.Machine,counting.Line,counting.Shift,counting.WorkOrder,counting.PartNo,counting.ProductItem,SalePlaceCode,counting.Period
                       FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] counting
                       LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on ipqc.Runcard = counting.Runcard
-                      LEFT JOIN [MES_OLAP].[dbo].[sap_customer_define] cus on cus.CustomerCode = counting.CustomerCode
+                      LEFT JOIN Customer cus on cus.customer_code = counting.CustomerCode
                       where counting.Year = {self.year} and counting.Week_No = '{self.week_no}'
                       and Machine like '%{self.plant}%'
                       and (OnlinePacking > 0 or WIPPacking > 0)
@@ -363,13 +368,18 @@ class WeeklyReport(Factory):
         df = pd.DataFrame(data)
 
         weight_sql = f"""
+                      WITH Customer AS (
+                      SELECT CAST(CAST(KUNNR AS BIGINT) AS VARCHAR(50)) customer_code,SORTL customer_name,[VKBUR] SalePlaceCode
+                      FROM [PMG_SAP].[dbo].[ZKNA1]
+                      )        
+                
                     SELECT 
                         ipqc.Runcard AS runcard, 
                         CAST(SalePlaceCode AS VARCHAR) + Weight_Defect AS defect_code, 
                         1 AS qty
                     FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] counting
                     LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc ON ipqc.Runcard = counting.Runcard
-                    LEFT JOIN [MES_OLAP].[dbo].[sap_customer_define] cus ON cus.CustomerCode = counting.CustomerCode
+                    LEFT JOIN Customer cus ON cus.customer_code = counting.CustomerCode
                     WHERE counting.Year = {self.year}
                       AND counting.Week_No = '{self.week_no}'
                       AND Weight_Status = 'NG'
@@ -398,7 +408,7 @@ class WeeklyReport(Factory):
                         SELECT 1
                         FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] counting
                         LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc ON ipqc.Runcard = counting.Runcard
-                        LEFT JOIN [MES_OLAP].[dbo].[sap_customer_define] cus ON cus.CustomerCode = counting.CustomerCode
+                        LEFT JOIN Customer cus ON cus.customer_code = counting.CustomerCode
                         WHERE counting.Year = {self.year}
                           AND counting.Week_No = '{self.week_no}'
                           AND Weight_Status = 'NG'

@@ -5,10 +5,10 @@ from sqlite3 import Error
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class mes_olap_database:
-    server = '10.13.104.181'
+    server = '10.13.102.22'
     database = 'MES_OLAP'
-    username = 'vnedc'
-    password = 'vnedc#2024'
+    username = 'sa'
+    password = '!QAw3ed'
     driver = 'ODBC Driver 17 for SQL Server'  # 根據你的環境選擇合適的 ODBC driver
 
     def select_sql(self, sql):
