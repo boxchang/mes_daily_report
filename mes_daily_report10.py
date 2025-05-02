@@ -139,7 +139,7 @@ class DailyReport(Factory):
 
     def Target_Setting(self, plant):
         self.activation_target = 0.97
-        self.capacity_target = 0.97
+        self.capacity_target = 0.99
         self.yield_target = 0.97
         self.oee_target = 0.95
         self.isolation_target = 0.05
@@ -168,25 +168,6 @@ class DailyReport(Factory):
 
     def Precheck(self):
         start_time = time.time()
-
-        sql = f"""
-            WITH WorkOrder AS (
-                select distinct CustomerCode, CustomerName from [dbo].[counting_hourly_info_raw]
-                where CustomerCode <> '' or CustomerName <> '' and belong_to = '{self.report_date1}'
-            )
-
-            SELECT W.CustomerCode, w.CustomerName FROM WorkOrder w
-            LEFT JOIN [sap_customer_define] d on w.CustomerCode = d.CustomerCode
-            WHERE d.CustomerCode is null
-        """
-        rows = self.mes_olap_db.select_sql_dict(sql)
-
-        for row in rows:
-            customerCode = row['CustomerCode']
-            customerName = row['CustomerName']
-            msg = f"MES_OLAP mes_defect_define {customerCode} {customerName} 沒有設定銷售地點"
-            if msg not in self.error_list:
-                self.error_list.append(msg)
 
         sql = f"""
         SELECT distinct cos.defect_code
@@ -411,6 +392,11 @@ class DailyReport(Factory):
 
     def get_df_ipqc(self):
         sql = f"""
+        WITH Customer AS (
+        SELECT CAST(CAST(substring([KUNNR],6,6) AS Int) AS varchar) customer_code,SORTL customer_name,[VKBUR] SalePlaceCode
+        FROM [PMG_SAP].[dbo].[ZKNA1]
+        )
+        
         select c.Runcard runcard,cu.SalePlaceCode
           ,[Tensile_Value]
           ,[Tensile_Limit]
@@ -462,7 +448,7 @@ class DailyReport(Factory):
           ,[Cosmetic_Status]
         from counting_hourly_info_raw c
         JOIN mes_ipqc_data ipqc on c.Runcard = ipqc.Runcard
-        LEFT JOIN sap_customer_define cu on cu.CustomerCode = c.CustomerCode
+        LEFT JOIN Customer cu on cu.customer_code = c.CustomerCode
         where c.belong_to = '{self.report_date1}'
         """
         rows = self.mes_olap_db.select_sql_dict(sql)
@@ -1808,21 +1794,21 @@ class DailyReport(Factory):
                 </tr>
                 <tr>
                   <td>
-                    產能效率(KPI: ≥97%)*產品良率(KPI: ≥97%)*設備妥善率(KPI: ≥97%)<br/>
+                    產能效率(KPI: ≥99%)*產品良率(KPI: ≥97%)*設備妥善率(KPI: ≥97%)<br/>
                     <span style="color:red; font-weight:bold;">OEE = 92%</span>
                   </td>
                   <td>2025/04/06</td>
                 </tr>
                 <tr>
                   <td>
-                    產能效率(KPI: ≥98%)*產品良率(KPI: ≥98%)*設備妥善率(KPI: ≥98%)<br/>
+                    產能效率(KPI: ≥99%)*產品良率(KPI: ≥98%)*設備妥善率(KPI: ≥98%)<br/>
                     <span style="color:red; font-weight:bold;">OEE = 94%</span>
                   </td>
                   <td>2025/07/09</td>
                 </tr>
                 <tr>
                   <td>
-                    產能效率(KPI: ≥98%)*產品良率(KPI: ≥98%)*設備妥善率(KPI: ≥99%)<br/>
+                    產能效率(KPI: ≥99%)*產品良率(KPI: ≥98%)*設備妥善率(KPI: ≥99%)<br/>
                     <span style="color:red; font-weight:bold;">OEE = 95%</span>
                   </td>
                   <td>2025/10/12</td>

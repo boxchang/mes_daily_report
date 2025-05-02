@@ -230,11 +230,11 @@ class WeeklyReport(Factory):
         if 'NBR' in self.plant:
             self.plant_ = 'NBR'
             self.scrap_target = 0.9
-            self.capacity = 0.97
+            self.capacity = 0.99
         elif 'PVC' in self.plant:
             self.plant_ = 'PVC1'
             self.scrap_target = 0.3
-            self.capacity = 0.97
+            self.capacity = 0.99
     def get_mach_list(self):
         start_time = time.time()
 
