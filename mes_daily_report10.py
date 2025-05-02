@@ -967,15 +967,15 @@ class DailyReport(Factory):
             for machine in machines_exceeding_24:
                 self.error_list.append(f"{machine}發生總時數超過24，可能IPQC有用錯RunCard的情況")
 
-        # 廢品資料尚未完成輸入
-        machine_qty_sum = fixed_main_df.groupby('Name')['Qty'].sum().reset_index()
-        machine_qty_sum = machine_qty_sum[machine_qty_sum['Qty'] > 0]
-        scrap_df = fixed_main_df[(fixed_main_df['Period'] == 5) & (fixed_main_df['Scrap'] > 0)]['Name'].unique()
-        machine_qty_sum['Scrap_Zero_in_P5'] = ~machine_qty_sum['Name'].isin(scrap_df)
-
-        for machine, flag in zip(machine_qty_sum['Name'], machine_qty_sum['Scrap_Zero_in_P5']):
-            if flag:
-                self.msg_list.append(f"{machine} 尚未完成廢品資料輸入")
+        # # 廢品資料尚未完成輸入
+        # machine_qty_sum = fixed_main_df.groupby('Name')['Qty'].sum().reset_index()
+        # machine_qty_sum = machine_qty_sum[machine_qty_sum['Qty'] > 0]
+        # scrap_df = fixed_main_df[(fixed_main_df['Period'] == 5) & (fixed_main_df['Scrap'] > 0)]['Name'].unique()
+        # machine_qty_sum['Scrap_Zero_in_P5'] = ~machine_qty_sum['Name'].isin(scrap_df)
+        #
+        # for machine, flag in zip(machine_qty_sum['Name'], machine_qty_sum['Scrap_Zero_in_P5']):
+        #     if flag:
+        #         self.msg_list.append(f"{machine} 尚未完成廢品資料輸入")
 
 
         # # 判斷是否有用其他方式收貨，要去詢問產線異常原因
