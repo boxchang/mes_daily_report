@@ -458,11 +458,16 @@ class DailyReport(Factory):
 
     def get_df_cosmetic(self):
 
-        sql = f"""    
+        sql = f"""
+          WITH Customer AS (
+          SELECT CAST(CAST(KUNNR AS BIGINT) AS VARCHAR(50)) customer_code,SORTL customer_name,[VKBUR] SalePlaceCode
+          FROM [PMG_SAP].[dbo].[ZKNA1]
+          )        
+            
           SELECT counting.Runcard runcard,counting.belong_to,counting.Machine,counting.Line,counting.Shift,counting.WorkOrder,counting.PartNo,counting.ProductItem,SalePlaceCode,counting.Period
           FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] counting
           LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on ipqc.Runcard = counting.Runcard
-          LEFT JOIN [MES_OLAP].[dbo].[sap_customer_define] cus on cus.CustomerCode = counting.CustomerCode
+          LEFT JOIN Customer cus on cus.customer_code = counting.CustomerCode
           where counting.belong_to = '{self.report_date1}'
           and Machine like '%{self.plant}%'
           and (OnlinePacking > 0 or WIPPacking > 0)
@@ -473,10 +478,15 @@ class DailyReport(Factory):
         df = pd.DataFrame(data)
 
         weight_sql = f"""
+        WITH Customer AS (
+        SELECT CAST(CAST(KUNNR AS BIGINT) AS VARCHAR(50)) customer_code,SORTL customer_name,[VKBUR] SalePlaceCode
+        FROM [PMG_SAP].[dbo].[ZKNA1]
+        )         
+        
         SELECT ipqc.Runcard runcard, Cast(SalePlaceCode as varchar)+Weight_Defect defect_code, 1 qty 
           FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] counting
           LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on ipqc.Runcard = counting.Runcard
-          LEFT JOIN [MES_OLAP].[dbo].[sap_customer_define] cus on cus.CustomerCode = counting.CustomerCode
+          LEFT JOIN Customer cus on cus.customer_code = counting.CustomerCode
           where counting.belong_to = '{report_date1}'
           and Weight_Status = 'NG'
           and Machine like '%{self.plant}%'
