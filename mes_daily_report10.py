@@ -393,7 +393,7 @@ class DailyReport(Factory):
     def get_df_ipqc(self):
         sql = f"""
         WITH Customer AS (
-        SELECT CAST(CAST(substring([KUNNR],6,6) AS Int) AS varchar) customer_code,SORTL customer_name,[VKBUR] SalePlaceCode
+        SELECT distinct CAST(CAST(substring([KUNNR],6,6) AS Int) AS varchar) customer_code,SORTL customer_name,[VKBUR] SalePlaceCode
         FROM [PMG_SAP].[dbo].[ZKNA1]
         )
         
@@ -460,7 +460,7 @@ class DailyReport(Factory):
 
         sql = f"""
           WITH Customer AS (
-          SELECT CAST(CAST(KUNNR AS BIGINT) AS VARCHAR(50)) customer_code,SORTL customer_name,[VKBUR] SalePlaceCode
+          SELECT distinct CAST(CAST(KUNNR AS BIGINT) AS VARCHAR(50)) customer_code,SORTL customer_name,[VKBUR] SalePlaceCode
           FROM [PMG_SAP].[dbo].[ZKNA1]
           )        
             
@@ -479,7 +479,7 @@ class DailyReport(Factory):
 
         weight_sql = f"""
         WITH Customer AS (
-        SELECT CAST(CAST(KUNNR AS BIGINT) AS VARCHAR(50)) customer_code,SORTL customer_name,[VKBUR] SalePlaceCode
+        SELECT distinct CAST(CAST(KUNNR AS BIGINT) AS VARCHAR(50)) customer_code,SORTL customer_name,[VKBUR] SalePlaceCode
         FROM [PMG_SAP].[dbo].[ZKNA1]
         )         
         
