@@ -227,14 +227,18 @@ class WeeklyReport(Factory):
         self.save_path = save_path
         self.fix_mode = fix_mode
 
-        if 'NBR' in self.plant:
+        if 'GD' in location:
+            self.capacity_target = 0.99
+        elif 'LK' in location:
+            self.capacity_target = 0.97
+
+        if 'NBR' in plant:
             self.plant_ = 'NBR'
-            self.scrap_target = 0.9
-            self.capacity = 0.99
-        elif 'PVC' in self.plant:
+            self.scrap_target = 0.009
+        elif 'PVC' in plant:
             self.plant_ = 'PVC1'
-            self.scrap_target = 0.3
-            self.capacity = 0.99
+            self.scrap_target = 0.0035
+
     def get_mach_list(self):
         start_time = time.time()
 
@@ -302,17 +306,26 @@ class WeeklyReport(Factory):
 
         # region Summary Achievement Chart
         # Target只看有做IPQC的部分
-        sql = f"""SELECT Machine name,
-                        sum(case when cast(belong_to as date) between '{this_start_date}' and '{this_end_date}' then OnlinePacking+WIPPacking else 0 end) as this_time,
-                        sum(case when cast(belong_to as date) between '{this_start_date}' and '{this_end_date}' then Target else 0 end) as target_this_time,
-                        (sum(case when cast(belong_to as date) between '{this_start_date}' and '{this_end_date}' then Target else 0 end) -
-                        sum(case when cast(belong_to as date) between '{this_start_date}' and '{this_end_date}' then OnlinePacking+WIPPacking else 0 end)) as this_unfinish
-                        FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] c
-                        JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on c.Runcard = ipqc.Runcard
-                        where Machine like '%{self.plant}%' and not (WorkOrder != '' and InspectedAQL ='')
-                        and Weight_Value > 0  and CountingQty > 100
-                        group by Machine
-                        order by Machine"""
+        sql = f"""
+                  SELECT pdd.Name name,
+                              SUM(ISNULL( OnlinePacking, 0) + ISNULL(WIPPacking, 0)) AS this_time,
+                              SUM(ISNULL( Target, 0)) AS target_this_time,
+                              SUM(ISNULL( Target, 0)) - SUM(ISNULL( OnlinePacking, 0) + ISNULL(WIPPacking, 0)) AS this_unfinish
+                  FROM [PMGMES].[dbo].[PMG_DML_DataModelList] pdd
+                  LEFT JOIN (
+                    SELECT chir.*
+                       FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] chir
+                      INNER JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc ON ipqc.Runcard = chir.Runcard
+                    WHERE 1 = 1
+                         AND chir.belong_to BETWEEN '{this_start_date}' AND '{this_end_date}'
+                         AND NOT (WorkOrder != '' AND InspectedAQL ='')
+						 AND  Weight_Value > 0 AND CountingQty > 100
+                  ) t1 ON pdd.Name = t1.Machine
+                WHERE pdd.DataModelTypeId = 'DMT000003'
+                      AND pdd.Name LIKE '%{self.plant}%'
+                GROUP BY pdd.Name
+                ORDER BY pdd.Name      
+                        """
         summary_chart_dict = self.mes_olap_db.select_sql_dict(sql)
         # endregion
 
@@ -1401,7 +1414,7 @@ class WeeklyReport(Factory):
                                   label=sr_achieve_rate,
                                   color='#ED7D31', marker='o', linewidth=1.5)
 
-        target_rate = self.capacity*100
+        target_rate = int(self.capacity_target*100)
 
         # Label Name
         sr_target = "達成率目標%"
@@ -1410,11 +1423,11 @@ class WeeklyReport(Factory):
         ly_label = "Product (百萬)"
 
         name = self.date_mark
-        title = f"\n{self.plant} {self.year} 第{self.week_no}週 ({name})目標達成率\n"
+        title = f"\n{self.plant} {self.year} 第{self.week_no}週 ({name})目標達成率 (達成率目標 > {target_rate}%)\n"
 
         yticks_positions = list(range(0, rounded_max_rate + 1 * rounded_step_rate, rounded_step_rate))
-        if target_rate not in yticks_positions:
-            yticks_positions.append(target_rate)
+        # if target_rate not in yticks_positions:
+        #     yticks_positions.append(target_rate)
         yticks_positions.append(rounded_max_rate + 0.25 * rounded_step_rate)
         yticks_positions = sorted(yticks_positions)
 
@@ -1570,7 +1583,8 @@ class WeeklyReport(Factory):
         ax1 = fig.add_subplot(gs[0])
         ax1.plot(filtered_x_scrap, filtered_scrap, label="廢品率 (%)", marker='o', linestyle='-', color='#ED7D31',
                  linewidth=2)
-        ax1.axhline(y=self.scrap_target, color='#ED7D31', linestyle='--', linewidth=1.5, label=f"廢品標準線({self.scrap_target})")
+        scrap_target = round(self.scrap_target*100, 2)
+        ax1.axhline(y=scrap_target, color='#ED7D31', linestyle='--', linewidth=1.5, label=f"廢品標準線({scrap_target})")
         ax1.set_xticks(x_range)
         ax1.set_xticklabels([])  # Hide x-axis labels for the top plot
         # ax1.set_ylabel('廢品率 (%)', fontsize=12, rotation=0)
@@ -1675,7 +1689,8 @@ class WeeklyReport(Factory):
 
         ax1.plot(filtered_x_scrap, filtered_scrap, label="廢品率 (%)", marker='o', linestyle='-', color='#ED7D31',
                  linewidth=2)
-        ax1.axhline(y=self.scrap_target, color='#ED7D31', linestyle='--', linewidth=1.5, label=f"廢品標準線({self.scrap_target})")
+        scrap_target = round(self.scrap_target*100, 2)
+        ax1.axhline(y=scrap_target, color='#ED7D31', linestyle='--', linewidth=1.5, label=f"廢品標準線({scrap_target})")
         ax1.set_xticks(x_range)
         ax1.set_xticklabels(x_labels, rotation=0, ha="center", fontsize=12)
 
@@ -1932,10 +1947,7 @@ class WeeklyReport(Factory):
                     name = f"各週產出量"
                     title = f"\n{self.plant} ({machine['name']})\n"
 
-                    if 'NBR' in self.plant:
-                        target_rate = 95
-                    elif 'PVC' in self.plant:
-                        target_rate = 98
+                    target_rate = int(self.capacity_target*100)
 
                     yticks_positions = list(range(0, rounded_max_rate + 1 * rounded_step_rate, rounded_step_rate))
                     if target_rate not in yticks_positions:

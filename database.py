@@ -315,8 +315,8 @@ class lkmes_database:
 class lkmes_olap_database:
     server = '10.14.102.11'
     database = 'MES_OLAP'
-    username = 'vnedc'
-    password = 'vnedc#2024'
+    username = 'sa'
+    password = '!QAw3ed'
     driver = 'ODBC Driver 17 for SQL Server'  # 根據你的環境選擇合適的 ODBC driver
 
     def select_sql(self, sql):

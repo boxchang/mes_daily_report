@@ -42,7 +42,7 @@ class Output(object):
 
 
     def execute(self):
-        year, week_no = Utils().get_week_data_df(self.vnedc_db, self.report_date1)
+        year, week_no = Utils().get_week_data_df(self.mes_olap_db, self.report_date1)
         plant = self.plant
         start_date = self.report_date1
         end_date = self.report_date2

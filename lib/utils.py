@@ -1,11 +1,11 @@
-from database import vnedc_database, mes_database
+from database import vnedc_database, mes_database, mes_olap_database
 import pandas as pd
 from datetime import datetime, timedelta
 
 class Utils(object):
     week_range = 15
 
-    def get_week_data_df(self, vnedc_db, date):
+    def get_week_data_df(self, mes_olap_db, date):
         year = ""
         week_no = ""
 
@@ -18,7 +18,7 @@ class Utils(object):
         """
 
         print(sql)
-        rows = vnedc_db.select_sql_dict(sql)
+        rows = mes_olap_db.select_sql_dict(sql)
 
         if len(rows) > 0:
             year = rows[0]["year"]
@@ -26,26 +26,7 @@ class Utils(object):
 
         return year, week_no
 
-    def get_week_date_df(self):
-        vnedc_db = vnedc_database()
-        date1 = datetime.now()
-        date2 = (date1 - timedelta(days=7)).strftime('%Y-%m-%d')
-        date1 = date1.strftime('%Y-%m-%d')
-
-        sql = f"""
-            SELECT TOP ({self.week_range}) *
-              FROM [MES_OLAP].[dbo].[week_date]
-              WHERE CONVERT(DATETIME, '{date1}', 121) > end_date and CONVERT(DATETIME, '{date2}', 121) <= end_date
-              AND enable = 1
-              ORDER BY year desc, month desc, month_week
-        """
-
-        print(sql)
-        raws = vnedc_db.select_sql_dict(sql)
-        df = pd.DataFrame(raws)
-        return df
-
-    def get_week_date_dist(self, vnedc_db):
+    def get_week_date_dist(self, mes_olap_db):
         result = None
         date1 = datetime.now()
         date2 = (date1 - timedelta(days=7)).strftime('%Y-%m-%d')
@@ -59,15 +40,14 @@ class Utils(object):
               ORDER BY year desc, month desc, month_week
         """
 
-        raws = vnedc_db.select_sql_dict(sql)
+        raws = mes_olap_db.select_sql_dict(sql)
 
         if len(raws) > 0:
             result = raws[0]
 
         return result
 
-    def generate_previous_weeks_with_dates(self, data_date):
-        vnedc_db = vnedc_database()
+    def generate_previous_weeks_with_dates(self, mes_olap_db, data_date):
         weeks_to_generate = 15
 
         weeks_list = []
@@ -79,7 +59,7 @@ class Utils(object):
                       WHERE start_date < '{data_date}' AND enable = 1
                       ORDER BY [year] desc, month desc, week_no desc
                 """
-        raws = vnedc_db.select_sql_dict(sql)
+        raws = mes_olap_db.select_sql_dict(sql)
 
         for data in raws:
             week = data['week_no']

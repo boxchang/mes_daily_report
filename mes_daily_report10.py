@@ -95,7 +95,7 @@ class mes_daily_report(object):
             dr.plant = plant
 
             logging.info(f"{plant} start running......")
-            dr.Target_Setting(plant)
+            dr.Target_Setting(location, plant)
 
             logging.info(f"{plant} generate_main_df......")
             main_df, cosmetic_df = dr.generate_main_df()
@@ -137,20 +137,27 @@ class DailyReport(Factory):
     error_list = []
     msg_list = []
 
-    def Target_Setting(self, plant):
-        self.activation_target = 0.97
-        self.capacity_target = 0.99
-        self.yield_target = 0.97
-        self.oee_target = 0.95
+    def Target_Setting(self, location, plant):
+        if "GD" in location:
+            self.capacity_target = 0.99
+            self.yield_target = 0.97
+            self.activation_target = 0.99
+            self.oee_target = 0.95
+        elif "LK" in location:
+            self.capacity_target = 0.97
+            self.yield_target = 0.95
+            self.activation_target = 0.98
+            self.oee_target = 0.90
+
         self.isolation_target = 0.05
         self.pinhole_target = 0.05
         self.weight_target = 0.1
         if 'NBR' in plant:
-            self.scrap_target = 0.009
+            self.scrap_target = 0.008
             self.faulty_target = 0.002
             self.former_miss_target = 0.015
         elif 'PVC' in plant:
-            self.scrap_target = 0.003
+            self.scrap_target = 0.0035
             self.faulty_target = 0
             self.former_miss_target = 0.001
 
@@ -446,8 +453,8 @@ class DailyReport(Factory):
           ,[Pinhole_Defect]
           ,[Cosmetic_Value]
           ,[Cosmetic_Status]
-        from counting_hourly_info_raw c
-        JOIN mes_ipqc_data ipqc on c.Runcard = ipqc.Runcard
+        from MES_OLAP.dbo.counting_hourly_info_raw c
+        JOIN MES_OLAP.dbo.mes_ipqc_data ipqc on c.Runcard = ipqc.Runcard
         LEFT JOIN Customer cu on cu.customer_code = c.CustomerCode
         where c.belong_to = '{self.report_date1}'
         """
@@ -1780,7 +1787,7 @@ class DailyReport(Factory):
                 time.sleep(180)  # seconds
 
     def get_mail_content(self):
-        result = """
+        result = f"""
         <hr />
         <table border="1" cellspacing="0" cellpadding="6" style="border-collapse: collapse; font-family: Arial; font-size: 14px; width:100%;background-color:#FFF">
             <thead style="background-color:#f0f0f0;">
@@ -1792,68 +1799,38 @@ class DailyReport(Factory):
               </thead>
               <tbody>
                 <tr>
-                  <td rowspan="4">
-                    設備綜合效率OEE<br/>
-                    <strong>KPI: ≥95%</strong>
-                  </td>
+                  <td>設備綜合效率OEE<br>KPI:≧95%</td>
                   <td>
-                    產能效率(KPI: ≥95%)*產品良率(KPI: ≥95%)*設備妥善率(KPI: ≥98%)<br/>
-                    <span style="color:red; font-weight:bold;">OEE = 88%</span>
+                    產能效率(KPI:≧97%) * 產品良率(KPI:≧95%) * 設備妥善率(KPI:≧98%)<br>
+                    <span style="color:red;">OEE = 90%</span>
                   </td>
-                  <td>2025/01/03</td>
+                  <td>2025/04-12</td>
                 </tr>
                 <tr>
-                  <td>
-                    產能效率(KPI: ≥99%)*產品良率(KPI: ≥97%)*設備妥善率(KPI: ≥97%)<br/>
-                    <span style="color:red; font-weight:bold;">OEE = 92%</span>
-                  </td>
-                  <td>2025/04/06</td>
+                  <td rowspan="3">NBR廢品率<br>KPI:≦0.4%</td>
+                  <td>廢品率(KPI:≦0.8%)</td>
+                  <td>2025/01-06</td>
                 </tr>
                 <tr>
-                  <td>
-                    產能效率(KPI: ≥99%)*產品良率(KPI: ≥98%)*設備妥善率(KPI: ≥98%)<br/>
-                    <span style="color:red; font-weight:bold;">OEE = 94%</span>
-                  </td>
-                  <td>2025/07/09</td>
+                  <td>廢品率(KPI:≦0.6%)</td>
+                  <td>2025/07-10</td>
                 </tr>
                 <tr>
-                  <td>
-                    產能效率(KPI: ≥99%)*產品良率(KPI: ≥98%)*設備妥善率(KPI: ≥99%)<br/>
-                    <span style="color:red; font-weight:bold;">OEE = 95%</span>
-                  </td>
-                  <td>2025/10/12</td>
+                  <td>廢品率(KPI:≦0.4%)</td>
+                  <td>2025/11-12</td>
                 </tr>
                 <tr>
-                  <td rowspan="3">
-                    NBR廢品率<br/>
-                    <strong>KPI: ≤0.4%</strong>
-                  </td>
-                  <td>廢品率(KPI: ≤0.9%)</td>
-                  <td>2025/01/06</td>
+                  <td rowspan="3">PVC廢品率<br>KPI:≦0.2%</td>
+                  <td>廢品率(KPI:≦0.35%)</td>
+                  <td>2025/01-06</td>
                 </tr>
                 <tr>
-                  <td>廢品率(KPI: ≤0.6%)</td>
-                  <td>2025/07/10</td>
+                  <td>廢品率(KPI:≦0.3%)</td>
+                  <td>2025/07-10</td>
                 </tr>
                 <tr>
-                  <td>廢品率(KPI: ≤0.4%)</td>
-                  <td>2025/11/12</td>
-                </tr>
-                <tr>
-                  <td rowspan="3">
-                    PVC廢品率<br/>
-                    <strong>KPI: ≤0.2%</strong>
-                  </td>
-                  <td>廢品率(KPI: ≤0.35%)</td>
-                  <td>2025/01/06</td>
-                </tr>
-                <tr>
-                  <td>廢品率(KPI: ≤0.3%)</td>
-                  <td>2025/07/10</td>
-                </tr>
-                <tr>
-                  <td>廢品率(KPI: ≤0.2%)</td>
-                  <td>2025/11/12</td>
+                  <td>廢品率(KPI:≦0.2%)</td>
+                  <td>2025/11-12</td>
                 </tr>
               </tbody>
         </table>

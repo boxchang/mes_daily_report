@@ -32,7 +32,7 @@ class MES_IPQC_SUMMARY(object):
             self.mes_olap_db = None
             self.vnedc_db = None
 
-        year, week_no = Utils().get_week_data_df(self.vnedc_db, start_date)
+        year, week_no = Utils().get_week_data_df(self.mes_olap_db, start_date)
         self.year = year
         self.week_no = week_no
         self.start_date = start_date
