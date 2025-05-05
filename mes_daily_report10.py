@@ -104,7 +104,7 @@ class mes_daily_report(object):
             fixed_main_df = dr.fix_main_df(main_df)
 
             logging.info(f"{plant} sorting_data......")
-            subtotals_df, chart_df, activation_df = dr.sorting_data(fixed_main_df, cosmetic_df)
+            subtotals_df, chart_df, activation_df, dashboard_df = dr.sorting_data(fixed_main_df, cosmetic_df)
 
             logging.info(f"{plant} validate_data......")
             dr.validate_data(fixed_main_df, subtotals_df)
@@ -117,6 +117,10 @@ class mes_daily_report(object):
             dr.generate_excel(fixed_main_df, subtotals_df, activation_df, cosmetic_df, excel_file)
             if os.path.exists(excel_file):
                 file_list.append({'file_name': file_name, 'excel_file': excel_file})
+
+            # Generate dashboard
+            logging.info(f"{plant} Processing_dashboard_data......")
+            dr.dashboard_data(dashboard_df, excel_file)
 
             # Generate Chart
             logging.info(f"{plant} generate_chart......")
@@ -577,6 +581,59 @@ class DailyReport(Factory):
 
         return df
 
+    # 目標標準設定
+    def get_target_setting(self):
+        if "NBR" in self.plant:
+            sql = f"""
+                    SELECT
+                            [Branch]
+                          , [CapacityOEE_target]
+                          , [OEE_target]
+                          , [Activation_target]
+                          , [EA_target]
+                          , [Capacity_target]
+                          , [Yield_target]
+                          , [OnlinePacking_target]
+                          , [Faulty_target]
+                          , [Scrap_target]
+                          , [Isolation_target]
+                          , [DMF_target]
+                          , [Model_target]
+                          , [OverControl_target]
+                      FROM [MES_OLAP].[dbo].[Target_Setting]
+                     WHERE Ver = (SELECT MAX(Ver)
+                      FROM [MES_OLAP].[dbo].[Target_Setting])
+                       AND Branch = '{self.plant}'
+            """
+
+        elif "PVC" in self.plant:
+            sql = f"""
+                    SELECT
+                            [Branch]
+                          , [CapacityOEE_target]
+                          , [OEE_target]
+                          , [Activation_target]
+                          , [EA_target]
+                          , [Capacity_target]
+                          , [Yield_target]
+                          , [OnlinePacking_target]
+                          , [Faulty_target]
+                          , [Scrap_target]
+                          , [Isolation_target]
+                          , [DMF_target]
+                          , [Model_target]
+                          , [OverControl_target]
+                      FROM [MES_OLAP].[dbo].[Target_Setting]
+                     WHERE Ver = (SELECT MAX(Ver)
+                      FROM [MES_OLAP].[dbo].[Target_Setting])
+                       AND Branch = '{self.plant}'
+            """
+        rows = self.mes_olap_db.select_sql_dict(sql)
+
+        df = pd.DataFrame(rows)
+
+        return df
+
     def generate_main_df(self):
         start_time = time.time()
 
@@ -698,6 +755,7 @@ class DailyReport(Factory):
         rows = []
         chart_rows = []
         activation_rows = []
+        dashboard_rows = []
 
         for mach_name, mach_group in mach_grouped:
             mach_cosmetic_dt = cosmetic_df[(cosmetic_df['Machine'] == mach_name)]
@@ -939,6 +997,11 @@ class DailyReport(Factory):
             rows.append(subtotal_df)  # Machine total summary
             chart_rows.append(subtotal_df)
 
+            # just need summary
+            dashboard_subtotal_df = subtotal_df.copy()
+            dashboard_subtotal_df['Branch'] = self.plant
+            dashboard_rows.append(dashboard_subtotal_df)
+
         # Combine the grouped data into a DataFrame
         with_subtotals_df = pd.concat(rows, ignore_index=True)
 
@@ -950,10 +1013,12 @@ class DailyReport(Factory):
 
         activation_df = pd.concat(activation_rows, ignore_index=True)
 
+        dashboard_df = pd.concat(dashboard_rows, ignore_index=True)
+
         end_time = time.time()
         elapsed_time = end_time - start_time
         self.logger.info(f"Time taken: {elapsed_time:.2f} seconds.")
-        return with_subtotals_df, chart_df, activation_df
+        return with_subtotals_df, chart_df, activation_df, dashboard_df
 
     def validate_data(self, fixed_main_df, subtotals_df):
         start_time = time.time()
@@ -1512,6 +1577,84 @@ class DailyReport(Factory):
                 cell_above.border = thin_top_border  # ✅ 設定上方框線
         # endregion
 
+    # @dashboard
+    def generate_dashboard_excel(self, writer, df):
+        # region 1. Column Define
+        font = Font(name=self.report_font, size=10, bold=False)
+        sheet = DataControl()
+        sheet.add(ColumnControl('Name', 'center', '@', '機台號', font, hidden=False, width=19))
+        sheet.add(ColumnControl('AQL', 'center', '@', 'AQL', font, hidden=False, width=9))
+        sheet.add(ColumnControl('avg_speed', 'right', '0', '平均車速', font, hidden=False, width=10, data_type=int, group="AVG_SPEED",
+                                comment="車速標準下限~車速標準上限+2%", comment_width=300))
+        sheet.add(ColumnControl('LineSpeedLower', 'right', '0', '標準車速下限', font, hidden=True, width=10, data_type=int,
+                                comment="車速標準下限", comment_width=200))
+        sheet.add(ColumnControl('LineSpeedUpper', 'right', '0', '標準車速上限', font, hidden=True, width=10, data_type=int,
+                                comment="車速標準上限", comment_width=200))
+        sheet.add(ColumnControl('ProductionTime', 'center', '@', '生產時間', font, hidden=False, width=10.5))
+        sheet.add(ColumnControl('sum_qty', 'right', '#,##0', '生產總量', font, hidden=False, width=14,
+                                comment="點數機數量", comment_width=200))
+        sheet.add(ColumnControl('OnlinePacking', 'right', '#,##0', '包裝確認量', font, hidden=False, width=14))
+        sheet.add(ColumnControl('WIPPacking', 'right', '#,##0', '半成品入庫量', font, hidden=False, width=14))
+        sheet.add(ColumnControl('Target', 'right', '#,##0', '目標產能', font, hidden=False, width=14,
+                                comment="生產時間(IPQC) * (標準車速上限/節距調整值)", comment_width=600))
+        sheet.add(ColumnControl('Activation', 'right', '0.00%', f'稼動率≥ {self.activation_target*100:g}%', font, hidden=True, width=12, limit=[None, self.activation_target],
+                                comment="點數機(A1B1)生產時間 / 工單預計生產時間"))
+        sheet.add(ColumnControl('Activation_target', 'right', '0.00%', '稼動率標準', font, hidden=True, width=12))
+        sheet.add(ColumnControl('Capacity', 'right', '0.00%', f'產能效率≥ {self.capacity_target*100:g}%', font, hidden=False, width=12, limit=[None, self.capacity_target],
+                                comment="(包裝確認量+半成品數量+二級品數量+廢品數量)/目標產能"))
+        sheet.add(ColumnControl('Capacity_target', 'right', '0.00%', '產能效率標準', font, hidden=True, width=12))
+        sheet.add(ColumnControl('Yield', 'right', '0.00%', f'良率≥ {self.yield_target*100:g}%', font, hidden=False, width=10, limit=[None, self.yield_target],
+                                comment="(包裝確認量+半成品數量-隔離品數量) / (包裝確認量+半成品數量+二級品數量+廢品數量)"))
+        sheet.add(ColumnControl('Yield_target', 'right', '0.00%', '良率標準', font, hidden=True, width=12))
+        sheet.add(ColumnControl('OEE', 'right', '0.00%', f'OEE≥ {self.oee_target*100:g}%', font, hidden=True, width=10, limit=[None, self.oee_target],
+                                comment="稼動率 x 產能效率 x 良率"))
+        sheet.add(ColumnControl('OEE_target', 'right', '0.00%', 'OEE標準', font, hidden=True, width=12))
+        sheet.add(ColumnControl('Isolation_Qty', 'right', '#,##0', '隔離品數量', font, hidden=False, width=13,
+                                comment="MES輸入的隔離品數量", comment_width=300))
+        sheet.add(ColumnControl('Isolation', 'right', '0.00%', f'隔離品率≤ {round(self.isolation_target*100,2):g}%', font, hidden=False, width=13, limit=[self.isolation_target, None],
+                                comment="隔離品數量/(包裝確認量+半成品數量+二級品數量+廢品數量)"))
+        sheet.add(ColumnControl('Isolation_target', 'right', '0.00%', '隔離品率標準', font, hidden=True, width=12))
+        sheet.add(ColumnControl('PinholeRate', 'right', '0.00%', f'美醫針孔不良率≤ {round(self.pinhole_target*100,2):g}%', font, hidden=False, width=17, limit=[self.pinhole_target, None]))
+        sheet.add(ColumnControl('Scrap', 'right', '0.00%', f'廢品≤ {round(self.scrap_target*100,2):g}%', font, hidden=False, width=13, limit=[self.scrap_target, None],
+                                comment="廢品數量/(包裝確認量+半成品數量+二級品數量+廢品數量)", comment_width=200))
+        sheet.add(ColumnControl('Scrap_target', 'right', '0.00%', '廢品率標準', font, hidden=True, width=12))
+        sheet.add(ColumnControl('SecondGrade', 'right', '0.00%', f'二級品≤ {round(self.faulty_target*100,2):g}%', font, hidden=False, width=13, limit=[self.faulty_target, None],
+                                comment="二級品數量/(包裝確認量+半成品數量+二級品數量+廢品數量)", comment_width=200))
+        sheet.add(ColumnControl('OverControl', 'right', '0.00%', f'超內控≤ {round(self.weight_target*100,2):g}%', font, hidden=False, width=13, limit=[self.weight_target, None]))
+        sheet.add(ColumnControl('OverControl_target', 'right', '0.00%', '超內控標準', font, hidden=True, width=12))
+        sheet.add(ColumnControl('Lost_Mold_Rate', 'center', '0.00%', f'缺模率≤ {round(self.former_miss_target*100,2):g}%', font,
+                          hidden=True, width=13, limit=[self.former_miss_target, None]))
+        sheet.add(ColumnControl('OpticalNGRate', 'center', '0.00%', '光檢不良率', font, hidden=False, width=15))
+        sheet.add(ColumnControl('DMF_Rate', 'center', '0.00%', '離型不良率', font, hidden=True, width=13))
+        sheet.add(ColumnControl('Cosmetic_DPM', 'right', '#,##0', '外觀DPM', font, hidden=False, width=10))
+        sheet.add(ColumnControl('Pinhole_DPM', 'right', '#,##0', '針孔DPM', font, hidden=False, width=10))
+
+        header_columns = sheet.header_columns
+        selected_columns = [col for col in sheet.column_names if col in df.columns]
+        # endregion
+
+        # region 2. DataFrame convert to Excel
+        df = df[selected_columns].copy()
+
+        # Change column names
+        df.rename(columns=header_columns, inplace=True)
+
+        namesheet = "dashboard"
+        # Write data to the Excel sheet with the machine name as the sheet name
+        df.to_excel(writer, sheet_name=namesheet, index=False)
+
+        # Read the written Excel file
+        workbook = writer.book
+        worksheet = writer.sheets[namesheet]
+
+        sheet.apply_formatting(worksheet)
+
+        # Freeze the first row
+        worksheet.freeze_panes = worksheet['F2']
+        # endregion
+
+        return workbook
+
     def generate_excel(self, fix_main_df, subtotals_df, activation_df, cosmetic_df, excel_file):
         start_time = time.time()
         with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
@@ -1755,6 +1898,14 @@ class DailyReport(Factory):
         df = pd.DataFrame(rows)
 
         return df
+
+    def dashboard_data(self, dashboard_df, excel_file):
+        df_target_setting = self.get_target_setting()
+        final_ds_df = pd.merge(dashboard_df, df_target_setting, on=['Branch'], how='left')
+
+        # 產生excel驗證資料
+        with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
+            self.generate_dashboard_excel(writer, final_ds_df)
 
     def send_email(self, config, subject, file_list, image_buffers, msg_list, error_list):
         logging.info(f"Start to send Email")
