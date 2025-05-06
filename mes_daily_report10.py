@@ -1799,10 +1799,10 @@ class DailyReport(Factory):
               </thead>
               <tbody>
                 <tr>
-                  <td>設備綜合效率OEE<br>KPI:≧95%</td>
+                  <td>設備綜合效率OEE<br>KPI:≧{int(self.oee_target*100)}%</td>
                   <td>
-                    產能效率(KPI:≧97%) * 產品良率(KPI:≧95%) * 設備妥善率(KPI:≧98%)<br>
-                    <span style="color:red;">OEE = 90%</span>
+                    產能效率(KPI:≧{int(self.capacity_target*100)}%) * 產品良率(KPI:≧{int(self.yield_target*100)}%) * 設備妥善率(KPI:≧{int(self.activation_target*100)}%)<br>
+                    <span style="color:red;">OEE = {int(self.oee_target*100)}%</span>
                   </td>
                   <td>2025/04-12</td>
                 </tr>
