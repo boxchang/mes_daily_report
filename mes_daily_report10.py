@@ -21,7 +21,7 @@ from openpyxl.comments import Comment
 import matplotlib.pyplot as plt
 from io import BytesIO
 from datetime import datetime, timedelta, date
-
+from lib.utils import Utils
 
 class mes_daily_report(object):
     def is_special_date(self, date):
@@ -1582,52 +1582,74 @@ class DailyReport(Factory):
         # region 1. Column Define
         font = Font(name=self.report_font, size=10, bold=False)
         sheet = DataControl()
+        sheet.add(ColumnControl('Plant', 'center', '@', '工廠', font, hidden=False, width=14))
+        sheet.add(ColumnControl('Branch', 'center', '@', '廠別', font, hidden=False, width=14))
+        sheet.add(ColumnControl('Year', 'center', '0', '年份', font, hidden=False, width=14))
+        sheet.add(ColumnControl('Month', 'center', '@', '月份', font, hidden=False, width=14))
+        sheet.add(ColumnControl('week_no', 'center', '@', '週', font, hidden=False, width=14))
+        sheet.add(ColumnControl('belong_to', 'center', '@', '歸屬日期', font, hidden=False, width=14))
         sheet.add(ColumnControl('Name', 'center', '@', '機台號', font, hidden=False, width=19))
-        sheet.add(ColumnControl('AQL', 'center', '@', 'AQL', font, hidden=False, width=9))
-        sheet.add(ColumnControl('avg_speed', 'right', '0', '平均車速', font, hidden=False, width=10, data_type=int, group="AVG_SPEED",
-                                comment="車速標準下限~車速標準上限+2%", comment_width=300))
+        sheet.add(ColumnControl('Machine_QTY', 'center', '0', '機台數', font, hidden=False, width=14))
+        sheet.add(ColumnControl('MachinePwOnQty', 'center', '0', '開機數', font, hidden=False, width=14))
+        sheet.add(ColumnControl('MachineTime', 'center', '0', '機台開機時間', font, hidden=False, width=14))
+        sheet.add(ColumnControl('MachineStopTime', 'center', '0', '機台異常停機時間', font, hidden=False, width=14))
+        sheet.add(ColumnControl('MachinePlanStop', 'center', '0', '機台計畫停機時間', font, hidden=False, width=14))
         sheet.add(ColumnControl('LineSpeedLower', 'right', '0', '標準車速下限', font, hidden=True, width=10, data_type=int,
                                 comment="車速標準下限", comment_width=200))
         sheet.add(ColumnControl('LineSpeedUpper', 'right', '0', '標準車速上限', font, hidden=True, width=10, data_type=int,
                                 comment="車速標準上限", comment_width=200))
-        sheet.add(ColumnControl('ProductionTime', 'center', '@', '生產時間', font, hidden=False, width=10.5))
-        sheet.add(ColumnControl('sum_qty', 'right', '#,##0', '生產總量', font, hidden=False, width=14,
-                                comment="點數機數量", comment_width=200))
-        sheet.add(ColumnControl('OnlinePacking', 'right', '#,##0', '包裝確認量', font, hidden=False, width=14))
-        sheet.add(ColumnControl('WIPPacking', 'right', '#,##0', '半成品入庫量', font, hidden=False, width=14))
-        sheet.add(ColumnControl('Target', 'right', '#,##0', '目標產能', font, hidden=False, width=14,
-                                comment="生產時間(IPQC) * (標準車速上限/節距調整值)", comment_width=600))
+        sheet.add(ColumnControl('StdSpeed', 'right', '0', 'StdSpeed ??', font, hidden=True, width=10, data_type=int))
+        sheet.add(ColumnControl('min_speed', 'right', '0', '最小車速', font, hidden=True, width=10, data_type=int))
+        sheet.add(ColumnControl('max_speed', 'right', '0', '最大車速', font, hidden=True, width=10, data_type=int))
+        sheet.add(ColumnControl('avg_speed', 'right', '0', '平均車速', font, hidden=False, width=10, data_type=int, group="AVG_SPEED",
+                                comment="車速標準下限~車速標準上限+2%", comment_width=300))
+        sheet.add(ColumnControl('RunTime', 'center', '0', '點數機開機時間', font, hidden=False, width=14))
+        sheet.add(ColumnControl('Stoptime', 'center', '0', '點數機異常停機', font, hidden=False, width=14))
+        sheet.add(ColumnControl('planstoptime', 'center', '0', '點數機計畫停機', font, hidden=False, width=14))
+        sheet.add(ColumnControl('AQL', 'center', '@', 'AQL', font, hidden=False, width=9))
+        sheet.add(ColumnControl('CapacityOEE', 'right', '0.00%', '產能OEE', font, hidden=True, width=12))
+        sheet.add(ColumnControl('CapacityOEE_target', 'right', '0.00%', '產能OEE標準', font, hidden=True, width=12))
+        sheet.add(ColumnControl('OEE', 'right', '0.00%', f'OEE≥ {self.oee_target*100:g}%', font, hidden=True, width=10, limit=[None, self.oee_target],
+                                comment="稼動率 x 產能效率 x 良率"))
+        sheet.add(ColumnControl('OEE_target', 'right', '0.00%', 'OEE標準', font, hidden=True, width=12))
         sheet.add(ColumnControl('Activation', 'right', '0.00%', f'稼動率≥ {self.activation_target*100:g}%', font, hidden=True, width=12, limit=[None, self.activation_target],
                                 comment="點數機(A1B1)生產時間 / 工單預計生產時間"))
         sheet.add(ColumnControl('Activation_target', 'right', '0.00%', '稼動率標準', font, hidden=True, width=12))
+        sheet.add(ColumnControl('EA', 'right', '0.00%', '設備妥善率', font, hidden=True, width=12))
+        sheet.add(ColumnControl('EA_target', 'right', '0.00%', '設備妥善率標準', font, hidden=True, width=12))
         sheet.add(ColumnControl('Capacity', 'right', '0.00%', f'產能效率≥ {self.capacity_target*100:g}%', font, hidden=False, width=12, limit=[None, self.capacity_target],
                                 comment="(包裝確認量+半成品數量+二級品數量+廢品數量)/目標產能"))
         sheet.add(ColumnControl('Capacity_target', 'right', '0.00%', '產能效率標準', font, hidden=True, width=12))
         sheet.add(ColumnControl('Yield', 'right', '0.00%', f'良率≥ {self.yield_target*100:g}%', font, hidden=False, width=10, limit=[None, self.yield_target],
                                 comment="(包裝確認量+半成品數量-隔離品數量) / (包裝確認量+半成品數量+二級品數量+廢品數量)"))
         sheet.add(ColumnControl('Yield_target', 'right', '0.00%', '良率標準', font, hidden=True, width=12))
-        sheet.add(ColumnControl('OEE', 'right', '0.00%', f'OEE≥ {self.oee_target*100:g}%', font, hidden=True, width=10, limit=[None, self.oee_target],
-                                comment="稼動率 x 產能效率 x 良率"))
-        sheet.add(ColumnControl('OEE_target', 'right', '0.00%', 'OEE標準', font, hidden=True, width=12))
+        sheet.add(ColumnControl('sum_qty', 'right', '#,##0', '生產總量(點數機數量)', font, hidden=False, width=14,
+                                comment="點數機數量", comment_width=200))
+        sheet.add(ColumnControl('OnlinePacking', 'right', '#,##0', '包裝確認量', font, hidden=False, width=14))
+        sheet.add(ColumnControl('OnlinePacking_Rate', 'right', '0.00%', '線上包裝率', font, hidden=True, width=12))
+        sheet.add(ColumnControl('WIPPacking', 'right', '#,##0', '半成品入庫量', font, hidden=False, width=14))
+        sheet.add(ColumnControl('Target', 'right', '#,##0', '目標產能', font, hidden=False, width=14,
+                                comment="生產時間(IPQC) * (標準車速上限/節距調整值)", comment_width=600))
+        sheet.add(ColumnControl('SecondGrade', 'right', '0.00%', f'二級品≤ {round(self.faulty_target*100,2):g}%', font, hidden=False, width=13, limit=[self.faulty_target, None],
+                                comment="二級品數量/(包裝確認量+半成品數量+二級品數量+廢品數量)", comment_width=200))
+        sheet.add(ColumnControl('FaultyRate', 'right', '0.00%', '二級品率', font, hidden=True, width=12))
+        sheet.add(ColumnControl('Scrap', 'right', '0.00%', f'廢品≤ {round(self.scrap_target*100,2):g}%', font, hidden=False, width=13, limit=[self.scrap_target, None],
+                                comment="廢品數量/(包裝確認量+半成品數量+二級品數量+廢品數量)", comment_width=200))
+        sheet.add(ColumnControl('Scrap_target', 'right', '0.00%', '廢品率標準', font, hidden=True, width=12))
         sheet.add(ColumnControl('Isolation_Qty', 'right', '#,##0', '隔離品數量', font, hidden=False, width=13,
                                 comment="MES輸入的隔離品數量", comment_width=300))
         sheet.add(ColumnControl('Isolation', 'right', '0.00%', f'隔離品率≤ {round(self.isolation_target*100,2):g}%', font, hidden=False, width=13, limit=[self.isolation_target, None],
                                 comment="隔離品數量/(包裝確認量+半成品數量+二級品數量+廢品數量)"))
         sheet.add(ColumnControl('Isolation_target', 'right', '0.00%', '隔離品率標準', font, hidden=True, width=12))
-        sheet.add(ColumnControl('PinholeRate', 'right', '0.00%', f'美醫針孔不良率≤ {round(self.pinhole_target*100,2):g}%', font, hidden=False, width=17, limit=[self.pinhole_target, None]))
-        sheet.add(ColumnControl('Scrap', 'right', '0.00%', f'廢品≤ {round(self.scrap_target*100,2):g}%', font, hidden=False, width=13, limit=[self.scrap_target, None],
-                                comment="廢品數量/(包裝確認量+半成品數量+二級品數量+廢品數量)", comment_width=200))
-        sheet.add(ColumnControl('Scrap_target', 'right', '0.00%', '廢品率標準', font, hidden=True, width=12))
-        sheet.add(ColumnControl('SecondGrade', 'right', '0.00%', f'二級品≤ {round(self.faulty_target*100,2):g}%', font, hidden=False, width=13, limit=[self.faulty_target, None],
-                                comment="二級品數量/(包裝確認量+半成品數量+二級品數量+廢品數量)", comment_width=200))
+        sheet.add(ColumnControl('DMF_Rate', 'center', '0.00%', '離型不良率', font, hidden=True, width=13))
+        sheet.add(ColumnControl('DMF_target', 'right', '0.00%', '離型不良率標準', font, hidden=True, width=12))
+        sheet.add(ColumnControl('LatexOverripe', 'right', '#,##0', '乳膠過熟料', font, hidden=False, width=14))
+        sheet.add(ColumnControl('ModelQty', 'right', '#,##0', '開機總手模數', font, hidden=False, width=14))
+        sheet.add(ColumnControl('ModelLostQty', 'right', '#,##0', '在線缺手模數', font, hidden=False, width=14))
+        sheet.add(ColumnControl('Model_target', 'center', '0.00%', '手模裝載率', font, hidden=True, width=13))
+        sheet.add(ColumnControl('Model_target', 'center', '0.00%', '手模裝載率標準', font, hidden=True, width=13))
         sheet.add(ColumnControl('OverControl', 'right', '0.00%', f'超內控≤ {round(self.weight_target*100,2):g}%', font, hidden=False, width=13, limit=[self.weight_target, None]))
         sheet.add(ColumnControl('OverControl_target', 'right', '0.00%', '超內控標準', font, hidden=True, width=12))
-        sheet.add(ColumnControl('Lost_Mold_Rate', 'center', '0.00%', f'缺模率≤ {round(self.former_miss_target*100,2):g}%', font,
-                          hidden=True, width=13, limit=[self.former_miss_target, None]))
-        sheet.add(ColumnControl('OpticalNGRate', 'center', '0.00%', '光檢不良率', font, hidden=False, width=15))
-        sheet.add(ColumnControl('DMF_Rate', 'center', '0.00%', '離型不良率', font, hidden=True, width=13))
-        sheet.add(ColumnControl('Cosmetic_DPM', 'right', '#,##0', '外觀DPM', font, hidden=False, width=10))
-        sheet.add(ColumnControl('Pinhole_DPM', 'right', '#,##0', '針孔DPM', font, hidden=False, width=10))
 
         header_columns = sheet.header_columns
         selected_columns = [col for col in sheet.column_names if col in df.columns]
@@ -1646,8 +1668,6 @@ class DailyReport(Factory):
         # Read the written Excel file
         workbook = writer.book
         worksheet = writer.sheets[namesheet]
-
-        sheet.apply_formatting(worksheet)
 
         # Freeze the first row
         worksheet.freeze_panes = worksheet['F2']
@@ -1899,13 +1919,47 @@ class DailyReport(Factory):
 
         return df
 
+    #產生儀錶板資料
     def dashboard_data(self, dashboard_df, excel_file):
-        df_target_setting = self.get_target_setting()
-        final_ds_df = pd.merge(dashboard_df, df_target_setting, on=['Branch'], how='left')
 
-        # 產生excel驗證資料
+        extra_df= self.get_target_setting()
+        year, week_no = Utils().get_week_data_df(self.mes_olap_db, report_date1)
+        extra_df['Plant'] = self.location
+        extra_df['belong_to'] = self.report_date1
+        extra_df['year'] = year
+        extra_df['Month'] = self.report_date1[4:6]
+        extra_df['week_no'] = week_no
+        extra_df['Machine_QTY'] = 0
+        extra_df['MachinePwOnQty'] = 0
+        extra_df['MachineTime'] = 0
+        extra_df['MachineStopTime'] = 0
+        extra_df['MachinePlanStop'] = 0
+        extra_df['StdSpeed'] = 0
+        extra_df['RunTime'] = 0
+        extra_df['Stoptime'] = 0
+        extra_df['planstoptime'] = 0
+        extra_df['CapacityOEE'] = 0
+        extra_df['EA'] = 0
+        extra_df['OnlinePacking_Rate'] = 0
+        extra_df['FaultyRate'] = 0
+        extra_df['ScrapRate'] = 0
+        extra_df['LatexOverripe'] = 0
+        extra_df['ModelQty'] = 0
+        extra_df['ModelLostQty'] = 0
+        extra_df['Model_target'] = 0
+
+        final_ds_df = pd.merge(dashboard_df, extra_df, on=['Branch'], how='left')
+
+        # Debug用 --產生insert清單的Excel
         with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
+        #    final_ds_df.to_excel(writer, index=False)
             self.generate_dashboard_excel(writer, final_ds_df)
+
+        #判斷是否可儲存入系統
+        # if not self.error_list:
+        #     logging.info(f"{plant} Processing_dashboard_data......")
+        # else:
+        #     logging.info(f"{plant} has an error message, Can't insert into daily......")
 
     def send_email(self, config, subject, file_list, image_buffers, msg_list, error_list):
         logging.info(f"Start to send Email")
@@ -1994,8 +2048,8 @@ report_date1 = report_date1.strftime('%Y%m%d')
 report_date2 = datetime.today()
 report_date2 = report_date2.strftime('%Y%m%d')
 
-# report_date1 = "20250418"
-# report_date2 = "20250419"
+report_date1 = "20250504"
+report_date2 = "20250505"
 
 report = mes_daily_report(report_date1, report_date2)
 report.main()
