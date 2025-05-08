@@ -50,7 +50,10 @@ class Factory(ABC):
         # Mail Info
         msg = MIMEMultipart()
         msg['From'] = f"{sender_alias} <{sender_email}>"
-        msg['To'] = ', '.join(config.to_emails)
+        if len(error_msg) > 0:
+            msg['To'] = ', '.join(config.admin_emails)
+        else:
+            msg['To'] = ', '.join(config.to_emails)
         msg['Subject'] = subject
 
         if len(error_msg) > 0:
