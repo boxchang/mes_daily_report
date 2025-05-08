@@ -401,7 +401,7 @@ class DailyReport(Factory):
         sql = f"""
         WITH Customer AS (
         SELECT distinct CAST(CAST(substring([KUNNR],6,6) AS Int) AS varchar) customer_code,SORTL customer_name,[VKBUR] SalePlaceCode
-        FROM [PMG_SAP].[dbo].[ZKNA1]
+        FROM [PMG_SAP].[dbo].[ZKNA1] where VKBUR in ('6100', '6200', '6300', '7000')
         )
         
         select c.Runcard runcard,cu.SalePlaceCode
@@ -468,7 +468,7 @@ class DailyReport(Factory):
         sql = f"""
           WITH Customer AS (
           SELECT distinct CAST(CAST(KUNNR AS BIGINT) AS VARCHAR(50)) customer_code,SORTL customer_name,[VKBUR] SalePlaceCode
-          FROM [PMG_SAP].[dbo].[ZKNA1]
+          FROM [PMG_SAP].[dbo].[ZKNA1] where VKBUR in ('6100', '6200', '6300', '7000')
           )        
             
           SELECT counting.Runcard runcard,counting.belong_to,counting.Machine,counting.Line,counting.Shift,counting.WorkOrder,counting.PartNo,counting.ProductItem,SalePlaceCode,counting.Period
@@ -487,7 +487,7 @@ class DailyReport(Factory):
         weight_sql = f"""
         WITH Customer AS (
         SELECT distinct CAST(CAST(KUNNR AS BIGINT) AS VARCHAR(50)) customer_code,SORTL customer_name,[VKBUR] SalePlaceCode
-        FROM [PMG_SAP].[dbo].[ZKNA1]
+        FROM [PMG_SAP].[dbo].[ZKNA1] where VKBUR in ('6100', '6200', '6300', '7000')
         )         
         
         SELECT ipqc.Runcard runcard, Cast(SalePlaceCode as varchar)+Weight_Defect defect_code, 1 qty 
