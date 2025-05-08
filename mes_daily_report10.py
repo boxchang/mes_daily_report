@@ -1919,6 +1919,22 @@ class DailyReport(Factory):
 
         return df
 
+    def get_lost_mold_rate(self):
+        sql = f"""
+        SELECT cd.MES_MACHINE Name, cd.LINE Line, CAST(DATEPART(hour, CreationTime) as INT) Period, round(sum(ModelLostQty) / SUM(c.ModelQty+c.ModelLostQty), 4) Lost_Mold_Rate
+          FROM [PMG_DEVICE].[dbo].[COUNTING_DATA] c
+          JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] cd on c.MachineName = cd.COUNTING_MACHINE
+          where ModelLostQty > 0 and ModelLostQty < 1000
+          and CreationTime between CONVERT(DATETIME, '{self.report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{self.report_date2} 05:59:59', 120)
+          group by cd.MES_MACHINE, cd.LINE, CAST(DATEPART(hour, CreationTime) as INT)
+        """
+
+        rows = self.mes_db.select_sql_dict(sql)
+
+        df = pd.DataFrame(rows)
+
+        return df
+
     #產生儀錶板資料
     def dashboard_data(self, dashboard_df, excel_file):
 
@@ -1929,15 +1945,10 @@ class DailyReport(Factory):
         extra_df['year'] = year
         extra_df['Month'] = self.report_date1[4:6]
         extra_df['week_no'] = week_no
-        extra_df['Machine_QTY'] = 0
-        extra_df['MachinePwOnQty'] = 0
+        extra_df['MachinePwOnQty'] = 1
         extra_df['MachineTime'] = 0
         extra_df['MachineStopTime'] = 0
         extra_df['MachinePlanStop'] = 0
-        extra_df['StdSpeed'] = 0
-        extra_df['RunTime'] = 0
-        extra_df['Stoptime'] = 0
-        extra_df['planstoptime'] = 0
         extra_df['CapacityOEE'] = 0
         extra_df['EA'] = 0
         extra_df['OnlinePacking_Rate'] = 0
