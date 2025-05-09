@@ -1919,14 +1919,18 @@ class DailyReport(Factory):
 
         return df
 
-    def get_lost_mold_rate(self):
+    #每台機器整天的平均總手模數、平均缺失數
+    def get_Model_rate(self):
         sql = f"""
-        SELECT cd.MES_MACHINE Name, cd.LINE Line, CAST(DATEPART(hour, CreationTime) as INT) Period, round(sum(ModelLostQty) / SUM(c.ModelQty+c.ModelLostQty), 4) Lost_Mold_Rate
+        SELECT cd.MES_MACHINE AS Name 
+           -- ,round(sum(c.ModelLostQty) / SUM(c.ModelQty + c.ModelLostQty), 4) AS Lost_Mold_Rate
+              ,round(SUM(c.ModelQty) / COUNT(c.ModelQty),0) AS ModelQty
+              ,round(SUM(c.ModelLostQty) / COUNT(c.ModelLostQty),0) AS ModelLostQty
           FROM [PMG_DEVICE].[dbo].[COUNTING_DATA] c
           JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] cd on c.MachineName = cd.COUNTING_MACHINE
           where ModelLostQty > 0 and ModelLostQty < 1000
           and CreationTime between CONVERT(DATETIME, '{self.report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{self.report_date2} 05:59:59', 120)
-          group by cd.MES_MACHINE, cd.LINE, CAST(DATEPART(hour, CreationTime) as INT)
+          group by cd.MES_MACHINE
         """
 
         rows = self.mes_db.select_sql_dict(sql)
@@ -1937,6 +1941,9 @@ class DailyReport(Factory):
 
     #產生儀錶板資料
     def dashboard_data(self, dashboard_df, excel_file):
+
+        df_model = self.get_Model_rate()
+        dashboard_df = pd.merge(dashboard_df, df_model, on=['Name'], how='left')
 
         extra_df= self.get_target_setting()
         year, week_no = Utils().get_week_data_df(self.mes_olap_db, report_date1)
@@ -1955,9 +1962,7 @@ class DailyReport(Factory):
         extra_df['FaultyRate'] = 0
         extra_df['ScrapRate'] = 0
         extra_df['LatexOverripe'] = 0
-        extra_df['ModelQty'] = 0
-        extra_df['ModelLostQty'] = 0
-        extra_df['Model_target'] = 0
+        extra_df['ModelIsInstalled'] = (1 - (dashboard_df.ModelLostQty / dashboard_df.ModelQty)).round(2)
 
         final_ds_df = pd.merge(dashboard_df, extra_df, on=['Branch'], how='left')
 
