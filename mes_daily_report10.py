@@ -1000,6 +1000,7 @@ class DailyReport(Factory):
             # just need summary
             dashboard_subtotal_df = subtotal_df.copy()
             dashboard_subtotal_df['Branch'] = self.plant
+            dashboard_subtotal_df['ScrapQuantity'] = scrap_qty
             dashboard_rows.append(dashboard_subtotal_df)
 
         # Combine the grouped data into a DataFrame
@@ -1630,7 +1631,8 @@ class DailyReport(Factory):
         sheet.add(ColumnControl('SecondGrade', 'right', '0.00%', '二級品', font, hidden=False, width=13, limit=[self.faulty_target, None],
                                 comment="二級品數量/(包裝確認量+半成品數量+二級品數量+廢品數量)", comment_width=200))
         sheet.add(ColumnControl('FaultyRate', 'right', '0.00%', '二級品率', font, hidden=True, width=12))
-        sheet.add(ColumnControl('Scrap', 'right', '0.00%', '廢品', font, hidden=False, width=13, limit=[self.scrap_target, None],
+        sheet.add(ColumnControl('ScrapQuantity', 'right', '#,##0', '廢品數', font, hidden=False, width=14))
+        sheet.add(ColumnControl('Scrap', 'right', '0.00%', '廢品率', font, hidden=False, width=13, limit=[self.scrap_target, None],
                                 comment="廢品數量/(包裝確認量+半成品數量+二級品數量+廢品數量)", comment_width=200))
         sheet.add(ColumnControl('Scrap_target', 'right', '0.00%', '廢品率標準', font, hidden=True, width=12))
         sheet.add(ColumnControl('Isolation_Qty', 'right', '#,##0', '隔離品數量', font, hidden=False, width=13,
@@ -1645,7 +1647,7 @@ class DailyReport(Factory):
         sheet.add(ColumnControl('ModelLostQty', 'right', '#,##0', '在線缺手模數', font, hidden=False, width=14))
         sheet.add(ColumnControl('Lost_Mold_Rate', 'center', '0.00%', '缺模率', font,
                                 hidden=True, width=13, limit=[self.former_miss_target, None]))
-        sheet.add(ColumnControl('Model_target', 'center', '0.00%', '手模裝載率', font, hidden=True, width=13,
+        sheet.add(ColumnControl('ModelIsInstalled', 'center', '0.00%', '手模裝載率', font, hidden=True, width=13,
                                 comment="1 - (在線缺手模數/開機总模具量)"))
         sheet.add(ColumnControl('Model_target', 'center', '0.00%', '手模裝載率標準', font, hidden=True, width=13))
         sheet.add(ColumnControl('OverControl', 'right', '0.00%', '超內控', font, hidden=False, width=13, limit=[self.weight_target, None]))
@@ -1670,7 +1672,7 @@ class DailyReport(Factory):
         worksheet = writer.sheets[namesheet]
 
         # Freeze the first row
-        worksheet.freeze_panes = worksheet['F2']
+        worksheet.freeze_panes = worksheet['G2']
         # endregion
 
         return workbook
@@ -1939,13 +1941,50 @@ class DailyReport(Factory):
 
         return df
 
+    def insert_dashboard_data(self, final_ds_df):
+        conn = self.mes_olap_db.conn
+        cursor = conn.cursor()
+        try:
+            for _,row in final_ds_df.iterrows():
+                insert_sql = f"""
+                INSERT INTO [MES_OLAP].[dbo].[counting_daily_info_raw] 
+                ([plant],[branch],[Year],[Month],[Week_No],[belong_to],[Machine],[MachinePwOnQty],[MachineTime],[MachineStopTime]
+                ,[MachinePlanStop],[LowSpeed],[UpSpeed],[MinSpeed],[MaxSpeed],[AvgSpeed],[AQL],[CapacityOEE],[CapacityOEE_target]
+                ,[OEE],[OEE_target],[Activation],[Activation_target],[EA],[EA_target],[Capacity],[Capacity_target],[Yield]
+                ,[Yield_target],[CountingQty],[OnlinePacking],[OnlinePacking_Rate],[WIPPacking],[Target],[FaultyQuantity]
+                ,[FaultyRate],[ScrapQuantity],[ScrapRate],[Scrap_target],[IsolationQty],[IsolationRate],[Isolation_target]
+                ,[DMF_Rate],[DMF_target],[LatexOverripe],[ModelQty],[ModelLostQty],[Lost_Mold_Rate],[ModelRate],[Model_target]
+                ,[OverControl],[OverControl_target],[ReserveValue1],[ReserveValue2],[ReserveValue3],[ReserveValue4]
+                ,[ReserveValue5],[create_at])
+                 VALUES( '{row["Plant"]}', '{row["Branch"]}', {row["year"]}, '{row["Month"]}', '{row["week_no"]}', '{row["belong_to"]}',
+                         '{row["Name"]}', {row["MachinePwOnQty"]},{row["MachineTime"]}, {row["MachineStopTime"]}, {row["MachinePlanStop"]}, 
+                          {row["LineSpeedLower"]}, {row["LineSpeedUpper"]},{row["min_speed"]}, {row["max_speed"]}, {row["avg_speed"]},
+                         '{row["AQL"]}', {row["CapacityOEE"]}, {row["CapacityOEE_target"]}, {row["OEE"]}, {row["OEE_target"]},
+                          {row["Activation"]},{row["Activation_target"]}, {row["EA"]}, {row["EA_target"]}, {row["Capacity"]},
+                          {row["Capacity_target"]}, {row["Yield"]},{row["Yield_target"]}, {row["sum_qty"]}, {row["OnlinePacking"]},
+                          {row["OnlinePacking_Rate"]}, {row["WIPPacking"]},  {row["Target"]}, {row["SecondGrade"]}, {row["FaultyRate"]},
+                          {row["ScrapQuantity"]},{row["Scrap"]}, {row["Scrap_target"]}, {row["Isolation_Qty"]},{row["Isolation"]},
+                          {row["Isolation_target"]}, {row["DMF_Rate"]}, {row["DMF_target"]}, {row["LatexOverripe"]}, {row["ModelQty"]},
+                          {row["ModelLostQty"]}, {row["Lost_Mold_Rate"]}, {row["ModelIsInstalled"]}, {row["Model_target"]}, 
+                          {row["OverControl"]}, {row["OverControl_target"]},  Null,  Null,  Null,  Null, Null, getdate())
+                """
+                cursor.execute(insert_sql)
+            conn.commit()   #全部成功後才commit
+            logging.info("The dashboard data Insert success.")
+        except Exception as e:
+            conn.rollback() #發生錯誤rollback
+            logging.info("The dashboard data Insert failed, transaction rollbacked.")
+            raise e
+
     #產生儀錶板資料
     def dashboard_data(self, dashboard_df, excel_file):
 
+        #取得當日機台總手模數、缺失手模數
         df_model = self.get_Model_rate()
         dashboard_df = pd.merge(dashboard_df, df_model, on=['Name'], how='left')
-
+        #取得目標設定
         extra_df= self.get_target_setting()
+        #欄位覆值
         year, week_no = Utils().get_week_data_df(self.mes_olap_db, report_date1)
         extra_df['Plant'] = self.location
         extra_df['belong_to'] = self.report_date1
@@ -1962,20 +2001,27 @@ class DailyReport(Factory):
         extra_df['FaultyRate'] = 0
         extra_df['ScrapRate'] = 0
         extra_df['LatexOverripe'] = 0
-        extra_df['ModelIsInstalled'] = (1 - (dashboard_df.ModelLostQty / dashboard_df.ModelQty)).round(2)
+        extra_df['ModelIsInstalled'] = (1 - (dashboard_df.ModelLostQty / dashboard_df.ModelQty)).round(4)
+
+        dashboard_df['OEE'] = dashboard_df['OEE'].round(4)
+        dashboard_df['Capacity'] = dashboard_df['Capacity'].round(4)
+        dashboard_df['Yield'] = dashboard_df['Yield'].round(4)
+        dashboard_df['Scrap'] = dashboard_df['Scrap'].round(4)
+        dashboard_df['Isolation'] = dashboard_df['Isolation'].round(4)
+        dashboard_df['DMF_Rate'] = dashboard_df['DMF_Rate'].round(4)
+        dashboard_df['Lost_Mold_Rate'] = dashboard_df['Lost_Mold_Rate'].round(4)
 
         final_ds_df = pd.merge(dashboard_df, extra_df, on=['Branch'], how='left')
 
         # Debug用 --產生insert清單的Excel
-        with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
-        #    final_ds_df.to_excel(writer, index=False)
-            self.generate_dashboard_excel(writer, final_ds_df)
+        #with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
+        #    self.generate_dashboard_excel(writer, final_ds_df)
 
         #判斷是否可儲存入系統
-        # if not self.error_list:
-        #     logging.info(f"{plant} Processing_dashboard_data......")
-        # else:
-        #     logging.info(f"{plant} has an error message, Can't insert into daily......")
+        if not self.error_list:
+            self.insert_dashboard_data(final_ds_df)
+        else:
+            logging.info(f"{plant} has an error message, Can't insert into daily......")
 
     def send_email(self, config, subject, file_list, image_buffers, msg_list, error_list):
         logging.info(f"Start to send Email")
@@ -2064,8 +2110,8 @@ report_date1 = report_date1.strftime('%Y%m%d')
 report_date2 = datetime.today()
 report_date2 = report_date2.strftime('%Y%m%d')
 
-report_date1 = "20250504"
-report_date2 = "20250505"
+#report_date1 = "20250504"
+#report_date2 = "20250505"
 
 report = mes_daily_report(report_date1, report_date2)
 report.main()
