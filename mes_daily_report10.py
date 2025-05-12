@@ -1115,9 +1115,9 @@ class DailyReport(Factory):
 
         sheet.add(ColumnControl('OverControl', 'right', '0.00%', f'超內控≤ {round(self.weight_target*100,2):g}%', font, hidden=False, width=13, limit=[self.weight_target, None]))
         sheet.add(ColumnControl('Lost_Mold_Rate', 'center', '0.00%', f'缺模率≤ {round(self.former_miss_target*100,2):g}%', font,
-                          hidden=True, width=13, limit=[self.former_miss_target, None]))
+                          hidden=False, width=13, limit=[self.former_miss_target, None]))
         sheet.add(ColumnControl('OpticalNGRate', 'center', '0.00%', '光檢不良率', font, hidden=False, width=15))
-        sheet.add(ColumnControl('DMF_Rate', 'center', '0.00%', '離型不良率', font, hidden=True, width=13))
+        sheet.add(ColumnControl('DMF_Rate', 'center', '0.00%', '離型不良率', font, hidden=False, width=13))
         sheet.add(ColumnControl('Cosmetic_DPM', 'right', '#,##0', '外觀DPM', font, hidden=False, width=10))
         sheet.add(ColumnControl('Pinhole_DPM', 'right', '#,##0', '針孔DPM', font, hidden=False, width=10))
 
@@ -1230,8 +1230,8 @@ class DailyReport(Factory):
         sheet.add(ColumnControl('Scrap', 'right', '#,##0', '廢品', font, hidden=False, width=11))
         sheet.add(ColumnControl('SecondGrade', 'right', '#,##0', '二級品', font, hidden=False, width=11))
         sheet.add(ColumnControl('Isolation_Qty', 'right', '#,##0', '隔離品數量', font, hidden=False, width=11))
-        sheet.add(ColumnControl('DMF_Rate', 'right', '0.00%', '離型不良率', font, hidden=True, width=12))
-        sheet.add(ColumnControl('Lost_Mold_Rate', 'right', '0.00%', '缺模率', font, hidden=True, width=12))
+        sheet.add(ColumnControl('DMF_Rate', 'right', '0.00%', '離型不良率', font, hidden=False, width=12))
+        sheet.add(ColumnControl('Lost_Mold_Rate', 'right', '0.00%', '缺模率', font, hidden=False, width=12))
         sheet.add(ColumnControl('OverControl', 'center', '@', '超內控', font, hidden=False, width=9))
         sheet.add(ColumnControl('WeightValue', 'center', '0.00', 'IPQC克重', font, hidden=False, width=11, data_type=float))
         sheet.add(ColumnControl('OpticalNGRate', 'center', '0.00%', '光檢不良率', font, hidden=False, width=10))
@@ -1920,6 +1920,7 @@ class DailyReport(Factory):
         rows = self.mes_db.select_sql_dict(sql)
 
         df = pd.DataFrame(rows)
+        df.loc[df['DMF_Rate'] >= 0.95, 'DMF_Rate'] = 0
 
         return df
 

@@ -217,6 +217,7 @@ class WeeklyReport(Factory):
         self.week_no = week_no
         self.report_date1 = report_date1
         self.report_date2 = report_date2
+        self.report_date3 = (datetime.strptime(report_date2, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
         self.hour_output_limit = int(hour_output_limit) if hour_output_limit else 1000
         self.report_font = report_font
         self.mes_db = mes_db
@@ -255,6 +256,52 @@ class WeeklyReport(Factory):
 
         return data
 
+    # 離型不良率
+    def get_dmf_rate(self):
+        if "NBR" in self.plant:
+            sql = f"""
+            SELECT 
+                FORMAT(CreationTime, 'yyyy-MM-dd') WorkDate,cd.MES_MACHINE Machine, cd.LINE Line, CAST(DATEPART(hour, CreationTime) as INT) Period, 
+                CASE 
+                    WHEN SUM(ModelQty2) = 0 THEN 0
+                    ELSE ROUND(
+                        (SUM(OverShortQty2) + SUM(OverLongQty2)) / SUM(ModelQty2), 
+                        4
+                    )
+                END AS DMF_Rate
+            FROM 
+                [PMG_DEVICE].[dbo].[COUNTING_DATA] c
+            JOIN 
+                [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] cd 
+                ON c.MachineName = cd.COUNTING_MACHINE
+            WHERE 
+                CreationTime BETWEEN 
+                    CONVERT(DATETIME, '{self.report_date1} 06:00:00', 120) 
+                    AND 
+                    CONVERT(DATETIME, '{self.report_date3} 05:59:59', 120)
+            GROUP BY 
+                FORMAT(CreationTime, 'yyyy-MM-dd'),MES_MACHINE,LINE,CAST(DATEPART(hour, CreationTime) as INT)
+            """
+
+        elif "PVC" in self.plant:
+            sql = f"""
+            SELECT FORMAT(CreationTime, 'yyyy-MM-dd') WorkDate,cd.MES_MACHINE Machine, cd.LINE Line, CAST(DATEPART(hour, CreationTime) as INT) Period, CASE 
+                    WHEN SUM(ModelQty2) = 0 THEN 0
+                    ELSE ROUND(SUM(Qty2) / SUM(ModelQty2), 4)
+                END AS DMF_Rate
+              FROM [PMG_DEVICE].[dbo].[PVC_GRM_DATA] g
+              JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] cd on g.MachineName = cd.COUNTING_MACHINE
+              where CreationTime between CONVERT(DATETIME, '{self.report_date1} 06:00:00', 120) and CONVERT(DATETIME, '{self.report_date3} 05:59:59', 120)
+              group by FORMAT(CreationTime, 'yyyy-MM-dd'),cd.MES_MACHINE, cd.LINE, CAST(DATEPART(hour, CreationTime) as INT) 
+
+            """
+        rows = self.mes_db.select_sql_dict(sql)
+
+        df = pd.DataFrame(rows)
+        df.loc[df['DMF_Rate'] >= 0.95, 'DMF_Rate'] = 0
+
+        return df
+
     def generate_main_df(self):
         start_time = time.time()
 
@@ -263,28 +310,32 @@ class WeeklyReport(Factory):
 
         # region Counting Machine Data
         sql = f"""SELECT WorkDate, Machine, Line, Shift, WorkOrder, PartNo, ProductItem, StandardAQL, InspectedAQL,
-                                        Period, MaxSpeed, MinSpeed, AvgSpeed, StdSpeed, CountingQty, OnlinePacking, WIPPacking, Target, ScrapQuantity, FaultyQuantity, RunTime, StopTime, 60 as AllTime, wd.week_no as Week_No,
-                                        Tensile_Value,Tensile_Limit,Tensile_Status,Elongation_Value,Elongation_Limit,Elongation_Status,
-                                        Roll_Value,Roll_Limit,Roll_Status,Cuff_Value,Cuff_Limit,Cuff_Status,Palm_Value,Palm_Limit,Palm_Status,
-                                        Finger_Value,Finger_Limit,Finger_Status,FingerTip_Value,FingerTip_Limit,FingerTip_Status,
-                                        Length_Value,Length_Limit,Length_Status, Weight_Value, Weight_Limit, IsolationQty,
-                                        CASE WHEN Weight_Defect IS NULL THEN NULL WHEN Weight_Defect = 'LL2' THEN 'NG' ELSE 'PASS' END AS Weight_Light, 
-                                        CASE WHEN Weight_Defect IS NULL THEN NULL WHEN Weight_Defect = 'LL1' THEN 'NG' ELSE 'PASS' END AS Weight_Heavy,
-                                        Width_Value,Width_Limit,Width_Status,
-                                        Pinhole_Value,Pinhole_Limit,Pinhole_Status
-                                        FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] c
-                                        left join [MES_OLAP].[dbo].[week_date] wd
-                                        on c.Week_No = wd.week_no
-                                        LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on c.Runcard = ipqc.Runcard
-                                        where c.Year = {self.year} and c.Week_No = '{self.week_no}'  
-                                        and c.Machine like'%{self.plant}%'
-                                        and not (WorkOrder != '' and InspectedAQL ='')
-                                        --and StandardAQL is not Null and InspectedAQL is not null 
-                                        order by Machine, WorkDate, Cast(Period as Int), Line
-                                        """
+                    Period, MaxSpeed, MinSpeed, AvgSpeed, StdSpeed, CountingQty, OnlinePacking, WIPPacking, Target, ScrapQuantity, FaultyQuantity, RunTime, StopTime, 60 as AllTime, wd.week_no as Week_No,
+                    Tensile_Value,Tensile_Limit,Tensile_Status,Elongation_Value,Elongation_Limit,Elongation_Status,
+                    Roll_Value,Roll_Limit,Roll_Status,Cuff_Value,Cuff_Limit,Cuff_Status,Palm_Value,Palm_Limit,Palm_Status,
+                    Finger_Value,Finger_Limit,Finger_Status,FingerTip_Value,FingerTip_Limit,FingerTip_Status,
+                    Length_Value,Length_Limit,Length_Status, Weight_Value, Weight_Limit, IsolationQty,
+                    CASE WHEN Weight_Defect IS NULL THEN NULL WHEN Weight_Defect = 'LL2' THEN 'NG' ELSE 'PASS' END AS Weight_Light, 
+                    CASE WHEN Weight_Defect IS NULL THEN NULL WHEN Weight_Defect = 'LL1' THEN 'NG' ELSE 'PASS' END AS Weight_Heavy,
+                    Width_Value,Width_Limit,Width_Status,
+                    Pinhole_Value,Pinhole_Limit,Pinhole_Status
+                    FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] c
+                    left join [MES_OLAP].[dbo].[week_date] wd
+                    on c.Week_No = wd.week_no
+                    LEFT JOIN [MES_OLAP].[dbo].[mes_ipqc_data] ipqc on c.Runcard = ipqc.Runcard
+                    where c.Year = {self.year} and c.Week_No = '{self.week_no}'  
+                    and c.Machine like'%{self.plant}%'
+                    and not (WorkOrder != '' and InspectedAQL ='')
+                    --and StandardAQL is not Null and InspectedAQL is not null 
+                    order by Machine, WorkDate, Cast(Period as Int), Line
+                    """
 
         data = self.mes_olap_db.select_sql_dict(sql)
         df = pd.DataFrame(data)
+
+        dmf_rate_df = self.get_dmf_rate()
+
+        df = pd.merge(df, dmf_rate_df, on=['WorkDate', 'Machine', 'Line', 'Period'], how='left')
 
         # 設定IPQC欄位判斷條件
         df['IPQC'] = df.apply(lambda row: "" if pd.isna(row['WorkOrder']) or row['WorkOrder'] == ""
@@ -364,7 +415,7 @@ class WeeklyReport(Factory):
         sql = f"""
                       WITH Customer AS (
                       SELECT CAST(CAST(KUNNR AS BIGINT) AS VARCHAR(50)) customer_code,SORTL customer_name,[VKBUR] SalePlaceCode
-                      FROM [PMG_SAP].[dbo].[ZKNA1]
+                      FROM [PMG_SAP].[dbo].[ZKNA1] where VKBUR in ('6100', '6200', '6300', '7000')
                       )
                                       
                       SELECT counting.Runcard runcard,counting.belong_to,counting.Machine,counting.Line,counting.Shift,counting.WorkOrder,counting.PartNo,counting.ProductItem,SalePlaceCode,counting.Period
@@ -383,7 +434,7 @@ class WeeklyReport(Factory):
         weight_sql = f"""
                       WITH Customer AS (
                       SELECT CAST(CAST(KUNNR AS BIGINT) AS VARCHAR(50)) customer_code,SORTL customer_name,[VKBUR] SalePlaceCode
-                      FROM [PMG_SAP].[dbo].[ZKNA1]
+                      FROM [PMG_SAP].[dbo].[ZKNA1] where VKBUR in ('6100', '6200', '6300', '7000')
                       )        
                 
                     SELECT 
@@ -1167,6 +1218,10 @@ class WeeklyReport(Factory):
                     target = filtered_df['Target'].sum()
                     rate = round(((int(onlinePacking)+int(wipPacking)) / int(target)), 3) if int(target) > 0 else 0
 
+                    output = onlinePacking + wipPacking + faultyQty + scrapQty
+                    isolationRate = round(isolationQty / output, 3) if int(output) > 0 else 0
+                    dmf_rate = round(filtered_df['DMF_Rate'].mean(), 4)
+
                     summary_row = {
                         'Name': machine_name,
                         'Date': tmp_week,
@@ -1186,7 +1241,9 @@ class WeeklyReport(Factory):
                         'Yield': '',
                         'Activation': '',
                         'OEE': '',
-                        'Achievement Rate': rate
+                        'Achievement Rate': rate,
+                        'IsolationRate': isolationRate,
+                        'DMF_Rate': dmf_rate
                     }
                     summary_data.append(summary_row)
 
@@ -1217,12 +1274,15 @@ class WeeklyReport(Factory):
             rate = round((onlinePacking+wipPacking) / target, 3) if int(target) > 0 else 0
             isolationRate = round(isolationQty / output, 3) if int(output) > 0 else 0
 
+            dmf_rate_values = [item['DMF_Rate'] for item in summary_data if item['Name'] == machine_name]
+            dmf_rate = round(sum(dmf_rate_values) / len(dmf_rate_values), 4) if dmf_rate_values else 0
+
             summary_data.append({'Name': machine_name, 'Date': tmp_week, 'Shift': '', 'Line': '',
                                  'CountingQty': countingQty, 'FaultyQuantity': faultyQty, 'ScrapQuantity': scrapQty,
                                  'IsolationQuantity': isolationQty, 'OnlinePacking': onlinePacking, 'WIPPacking': wipPacking,
                                  'RunTime': runTime, 'AllTime': allTime, 'AvgSpeed': avgSpeed, 'Target': target,
                                  'Capacity': capacity, 'Yield': _yield, 'Activation': activation, 'OEE': oee,
-                                 'Achievement Rate': rate, 'IsolationRate': isolationRate})
+                                 'Achievement Rate': rate, 'IsolationRate': isolationRate, 'DMF_Rate': dmf_rate})
         summary_df = pd.DataFrame(summary_data)
 
         all_mach_sum_df = pd.concat(mach_sum_list)
@@ -1281,6 +1341,7 @@ class WeeklyReport(Factory):
 
         sheet.add(ColumnControl('IsolationRate', 'right', '0.00%', '隔離率', font, hidden=False, width=10,
                                 comment="隔離品數量/(包裝確認量+半成品入庫量+二級品數量+廢品數量)", comment_width=700))
+        sheet.add(ColumnControl('DMF_Rate', 'center', '0.00%', '離型不良率', font, hidden=False, width=13))
 
 
 
