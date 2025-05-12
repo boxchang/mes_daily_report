@@ -120,7 +120,9 @@ class mes_daily_report(object):
 
             # Generate dashboard
             logging.info(f"{plant} Processing_dashboard_data......")
-            dr.dashboard_data(dashboard_df, excel_file)
+            file_name_test = f'MES_{location}_{plant}_Dashboard_{report_date1}.xlsx'
+            excel_file_test = os.path.join(self.save_path, file_name_test)
+            dr.dashboard_data(dashboard_df, excel_file_test)
 
             # Generate Chart
             logging.info(f"{plant} generate_chart......")
@@ -2014,8 +2016,8 @@ class DailyReport(Factory):
         final_ds_df = pd.merge(dashboard_df, extra_df, on=['Branch'], how='left')
 
         # Debug用 --產生insert清單的Excel
-        #with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
-        #    self.generate_dashboard_excel(writer, final_ds_df)
+        with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
+            self.generate_dashboard_excel(writer, final_ds_df)
 
         #判斷是否可儲存入系統
         if not self.error_list:
