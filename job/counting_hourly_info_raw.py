@@ -201,10 +201,39 @@ class Output(object):
             pitch_raws = self.mes_db.select_sql_dict(pitch_sql)
             pitch_df = pd.DataFrame(pitch_raws)
 
+            # 離型資料
+            dmf_sql = f"""
+            SELECT 
+                cd.MES_MACHINE AS Machine,
+                cd.LINE AS Line,
+                FORMAT(CreationTime, 'yyyy-MM-dd') AS WorkDate,
+                CAST(DATEPART(hour, CreationTime) AS INT) AS Period, 
+                Sum(OverShortQty2) OverShortQty,Sum(OverLongQty2) OverLongQty,Sum(ModelQty2) ModelQty
+            FROM 
+                [PMG_DEVICE].[dbo].[COUNTING_DATA] c
+            JOIN 
+                [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] cd 
+                ON c.MachineName = cd.COUNTING_MACHINE
+            WHERE 
+                CreationTime BETWEEN 
+                    CONVERT(DATETIME, '{start_date} 06:00:00', 120) 
+                    AND 
+                    CONVERT(DATETIME, '{end_date} 05:59:59', 120)
+                AND MES_MACHINE = '{mach}' and Line in ('A1','A2','B1','B2')
+            GROUP BY 
+                MES_MACHINE, LINE, FORMAT(CreationTime, 'yyyy-MM-dd'), CAST(DATEPART(hour, CreationTime) AS INT)
+            ORDER BY MES_MACHINE, LINE, FORMAT(CreationTime, 'yyyy-MM-dd'), CAST(DATEPART(hour, CreationTime) AS INT)
+            """
+            print(dmf_sql)
+            dmf_raws = self.mes_db.select_sql_dict(dmf_sql)
+            dmf_df = pd.DataFrame(dmf_raws)
+
+
 
             if not counting_df.empty and not wo_info_df.empty:
                 data_df = pd.merge(counting_df, wo_info_df, on=['WorkDate', 'Machine', 'Line', 'Period'], how='left')
                 data_df = pd.merge(data_df, pitch_df, on=['Machine'], how='left')
+                data_df = pd.merge(data_df, dmf_df, on=['Machine'], how='left')
 
                 # 點數機會有模擬測試的情況，有RunCard才算點數機數量
                 data_df["MaxSpeed"] = pd.to_numeric(data_df["MaxSpeed"], errors="coerce")
