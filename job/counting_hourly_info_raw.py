@@ -279,6 +279,9 @@ class Output(object):
                 data_df['InspectedAQL'] = data_df['InspectedAQL'].fillna('').astype(str)
                 data_df['Shift'] = data_df['Period'].apply(self.shift)
                 data_df['IsolationQty'] = data_df['IsolationQty'].fillna('null').astype(str)
+                data_df['OverShortQty'] = data_df['OverShortQty'].fillna('null').astype(str)
+                data_df['OverLongQty'] = data_df['OverLongQty'].fillna('null').astype(str)
+                data_df['ModelQty'] = data_df['ModelQty'].fillna('null').astype(str)
 
                 # 點數機資料修正
                 if not fix_df.empty:
@@ -321,6 +324,9 @@ class Output(object):
                         standard_aql = row['StandardAQL'] if row['StandardAQL'] != '' else 'null'
                         inspected_aql = row['InspectedAQL'] if row['InspectedAQL'] != '' else 'null'
                         isolation_qty = row['IsolationQty'] if row['IsolationQty'] != 'null' else 0
+                        overshort_qty = row['OverShortQty'] if row['OverShortQty'] != 'null' else 0
+                        overlong_qty = row['OverLongQty'] if row['OverLongQty'] != 'null' else 0
+                        model_qty = row['ModelQty'] if row['ModelQty'] != 'null' else 0
 
                         if work_date != '':
                             if int(period) >= 0 and int(period) <= 5:
@@ -332,13 +338,13 @@ class Output(object):
                         insert_sql = f"""
                         Insert into counting_hourly_info_raw ([Year], Week_No, WorkOrder, WoStartDate, WoEndDate, PartNo, ProductItem, WorkDate, 
                         Machine, Line, Shift, Runcard, Period, LowSpeed, UpSpeed, StdSpeed, MinSpeed, MaxSpeed, AvgSpeed,RunTime, StopTime, CountingQty, OnlinePacking, WIPPacking, Target, FaultyQuantity, ScrapQuantity, 
-                        StandardAQL, InspectedAQL, create_at, plant, branch, belong_to, CustomerCode, CustomerName, IsolationQty)
+                        StandardAQL, InspectedAQL, create_at, plant, branch, belong_to, CustomerCode, CustomerName, IsolationQty, ModelQty, OverShortQty, OverLongQty)
                         Values({year}, '{week_no}', '{work_order}','{wo_start_date}','{wo_end_date}','{part_no}','{product_item}','{work_date}',
                         '{machine}','{line}', N'{shift}','{runcard}',{period},{low_speed},{up_speed},{std_speed}, 
                         {min_speed},{max_speed},{avg_speed},{run_time}, {stop_time},
                         {counting_qty},{online_packing_qty},{wip_packing_qty},{target},{faulty_qty},{scrap_qty},
                         {standard_aql}, {inspected_aql},
-                        GETDATE(), '{sPlant}', '{plant}', '{belong_to}', '{customer_code}', '{customer_name}', {isolation_qty})
+                        GETDATE(), '{sPlant}', '{plant}', '{belong_to}', '{customer_code}', '{customer_name}', {isolation_qty}, {model_qty}, {overshort_qty}, {overlong_qty})
                         """
                         print(insert_sql)
                         self.mes_olap_db.execute_sql(insert_sql)
