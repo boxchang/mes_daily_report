@@ -1939,12 +1939,20 @@ class DailyReport(Factory):
         """
 
         rows = self.mes_db.select_sql_dict(sql)
-
         df = pd.DataFrame(rows)
-
         return df
 
-    def insert_dashboard_data(self, final_ds_df):
+    def delete_data(self, plant, location, belong_to):
+        sql = f"""
+            DELETE FROM [MES_OLAP].[dbo].[counting_daily_info_raw] 
+             WHERE plant = '{location}' AND branch = '{plant}' AND belong_to = '{belong_to}'
+            """
+        print(sql)
+        self.mes_olap_db.execute_sql(sql)
+
+    def insert_dashboard_data(self, final_ds_df, plant, location, belong_to):
+        self.delete_data(plant, location, belong_to)
+
         conn = self.mes_olap_db.conn
         cursor = conn.cursor()
         try:
@@ -2017,12 +2025,13 @@ class DailyReport(Factory):
         final_ds_df = pd.merge(dashboard_df, extra_df, on=['Branch'], how='left')
 
         # Debug用 --產生insert清單的Excel
-        with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
-            self.generate_dashboard_excel(writer, final_ds_df)
+        #with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
+        #    self.generate_dashboard_excel(writer, final_ds_df)
 
         #判斷是否可儲存入系統
         if not self.error_list:
-            self.insert_dashboard_data(final_ds_df)
+            plant = self.plant
+            self.insert_dashboard_data(final_ds_df, plant, self.location, self.report_date1)
         else:
             logging.info(f"{plant} has an error message, Can't insert into daily......")
 
