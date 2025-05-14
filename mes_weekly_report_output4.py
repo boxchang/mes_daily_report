@@ -318,7 +318,7 @@ class WeeklyReport(Factory):
                     CASE WHEN Weight_Defect IS NULL THEN NULL WHEN Weight_Defect = 'LL2' THEN 'NG' ELSE 'PASS' END AS Weight_Light, 
                     CASE WHEN Weight_Defect IS NULL THEN NULL WHEN Weight_Defect = 'LL1' THEN 'NG' ELSE 'PASS' END AS Weight_Heavy,
                     Width_Value,Width_Limit,Width_Status,
-                    Pinhole_Value,Pinhole_Limit,Pinhole_Status
+                    Pinhole_Value,Pinhole_Limit,Pinhole_Status,ModelQty,OverShortQty,OverLongQty 
                     FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] c
                     left join [MES_OLAP].[dbo].[week_date] wd
                     on c.Week_No = wd.week_no
@@ -629,6 +629,9 @@ class WeeklyReport(Factory):
         sheet.add(ColumnControl('Pinhole_Status', 'center', '@', '針孔結果', font, hidden=False, width=10, level=1))
         sheet.add(ColumnControl('IPQC', 'center', '@', 'IPQC', font, hidden=False, width=10))
         sheet.add(ColumnControl('IsolationQty', 'right', '#,##0', '隔離品數量', font, hidden=False, width=11))
+        sheet.add(ColumnControl('ModelQty', 'right', '0', '手模數量', font, hidden=False, width=11))
+        sheet.add(ColumnControl('OverShortQty', 'right', '0', '離型過短數量', font, hidden=False, width=11))
+        sheet.add(ColumnControl('OverLongQty', 'right', '0', '離型過長數量', font, hidden=False, width=11))
 
         header_columns = sheet.header_columns
         column_letter = sheet.column_letter
