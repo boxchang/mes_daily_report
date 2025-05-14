@@ -227,13 +227,14 @@ class Output(object):
             print(dmf_sql)
             dmf_raws = self.mes_db.select_sql_dict(dmf_sql)
             dmf_df = pd.DataFrame(dmf_raws)
+            dmf_df['Period'] = dmf_df['Period'].astype(str)
 
 
 
             if not counting_df.empty and not wo_info_df.empty:
                 data_df = pd.merge(counting_df, wo_info_df, on=['WorkDate', 'Machine', 'Line', 'Period'], how='left')
                 data_df = pd.merge(data_df, pitch_df, on=['Machine'], how='left')
-                data_df = pd.merge(data_df, dmf_df, on=['Machine'], how='left')
+                data_df = pd.merge(data_df, dmf_df, on=['Machine', 'Line', 'WorkDate', 'Period'], how='left')
 
                 # 點數機會有模擬測試的情況，有RunCard才算點數機數量
                 data_df["MaxSpeed"] = pd.to_numeric(data_df["MaxSpeed"], errors="coerce")
@@ -358,6 +359,9 @@ report_date1 = report_date1.strftime('%Y%m%d')
 report_date2 = datetime.today()
 report_date2 = report_date2.strftime('%Y%m%d')
 
+#report_date1 = '20250512'
+#report_date2 = '20250513'
+
 config_file = "..\mes_daily_report.config"
 config = configparser.ConfigParser()
 config.read(config_file, encoding='utf-8')
@@ -370,7 +374,6 @@ fix_end_date = config['Settings'].get('fix_end_date')
 if len(fix_start_date) > 0 and len(fix_end_date) > 0:
     report_date1 = fix_start_date
     report_date2 = fix_end_date
-
 
 for plant in plants:
     output = Output(location, plant, report_date1, report_date2)
