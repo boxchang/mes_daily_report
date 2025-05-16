@@ -202,34 +202,47 @@ class Output(object):
             pitch_df = pd.DataFrame(pitch_raws)
 
             # 離型資料
-            dmf_sql = f"""
-            SELECT 
-                cd.MES_MACHINE AS Machine,
-                cd.LINE AS Line,
-                FORMAT(CreationTime, 'yyyy-MM-dd') AS WorkDate,
-                CAST(DATEPART(hour, CreationTime) AS INT) AS Period, 
-                Sum(OverShortQty2) OverShortQty,Sum(OverLongQty2) OverLongQty,Sum(ModelQty2) ModelQty
-            FROM 
-                [PMG_DEVICE].[dbo].[COUNTING_DATA] c
-            JOIN 
-                [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] cd 
-                ON c.MachineName = cd.COUNTING_MACHINE
-            WHERE 
-                CreationTime BETWEEN 
-                    CONVERT(DATETIME, '{start_date} 06:00:00', 120) 
-                    AND 
-                    CONVERT(DATETIME, '{end_date} 05:59:59', 120)
-                AND MES_MACHINE = '{mach}' and Line in ('A1','A2','B1','B2')
-            GROUP BY 
-                MES_MACHINE, LINE, FORMAT(CreationTime, 'yyyy-MM-dd'), CAST(DATEPART(hour, CreationTime) AS INT)
-            ORDER BY MES_MACHINE, LINE, FORMAT(CreationTime, 'yyyy-MM-dd'), CAST(DATEPART(hour, CreationTime) AS INT)
-            """
+            if "NBR" in sPlant2:
+                dmf_sql = f"""
+                SELECT 
+                      cd.MES_MACHINE AS Machine
+                     ,cd.LINE AS Line
+                     ,FORMAT(CreationTime, 'yyyy-MM-dd') AS WorkDate
+                     ,CAST(DATEPART(hour, CreationTime) AS INT) AS Period
+                     ,Sum(OverShortQty2) OverShortQty
+                     ,Sum(OverLongQty2) OverLongQty
+                     ,Sum(ModelQty2) ModelQty
+                     , 0 AS GRM_Qty
+                FROM 
+                    [PMG_DEVICE].[dbo].[COUNTING_DATA] c
+                JOIN 
+                    [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] cd ON c.MachineName = cd.COUNTING_MACHINE
+                WHERE CreationTime BETWEEN CONVERT(DATETIME, '{start_date} 06:00:00', 120) 
+                  AND CONVERT(DATETIME, '{end_date} 05:59:59', 120)
+                  AND MES_MACHINE = '{mach}' and Line in ('A1','A2','B1','B2')
+                GROUP BY MES_MACHINE, LINE, FORMAT(CreationTime, 'yyyy-MM-dd'), CAST(DATEPART(hour, CreationTime) AS INT)
+                ORDER BY MES_MACHINE, LINE, FORMAT(CreationTime, 'yyyy-MM-dd'), CAST(DATEPART(hour, CreationTime) AS INT)
+                """
+
+            elif "PVC" in sPlant2:
+                dmf_sql = f"""
+                SELECT cd.MES_MACHINE AS Machine
+                       ,cd.LINE AS Line
+                       ,FORMAT(CreationTime, 'yyyy-MM-dd') AS WorkDate
+                       ,CAST(DATEPART(hour, CreationTime) as INT) Period
+                       ,0 AS OverShortQty
+                       ,0 AS OverLongQty
+                       ,Sum(ModelQty2) AS ModelQty
+                       ,SUM(Qty2) AS GRM_Qty
+                  FROM [PMG_DEVICE].[dbo].[PVC_GRM_DATA] g
+                  JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] cd on g.MachineName = cd.COUNTING_MACHINE
+                 WHERE CreationTime BETWEEN CONVERT(DATETIME, '{start_date} 06:00:00', 120) AND CONVERT(DATETIME, '{end_date} 05:59:59', 120)
+                 GROUP BY cd.MES_MACHINE, cd.LINE, CAST(DATEPART(hour, CreationTime) AS INT) 
+                    """
             print(dmf_sql)
             dmf_raws = self.mes_db.select_sql_dict(dmf_sql)
             dmf_df = pd.DataFrame(dmf_raws)
             dmf_df['Period'] = dmf_df['Period'].astype(str)
-
-
 
             if not counting_df.empty and not wo_info_df.empty:
                 data_df = pd.merge(counting_df, wo_info_df, on=['WorkDate', 'Machine', 'Line', 'Period'], how='left')
@@ -283,6 +296,7 @@ class Output(object):
                 data_df['OverShortQty'] = data_df['OverShortQty'].fillna('null').astype(str)
                 data_df['OverLongQty'] = data_df['OverLongQty'].fillna('null').astype(str)
                 data_df['ModelQty'] = data_df['ModelQty'].fillna('null').astype(str)
+                data_df['GRM_Qty'] = data_df['GRM_Qty'].fillna('null').astype(str)
 
                 # 點數機資料修正
                 if not fix_df.empty:
@@ -339,13 +353,13 @@ class Output(object):
                         insert_sql = f"""
                         Insert into counting_hourly_info_raw ([Year], Week_No, WorkOrder, WoStartDate, WoEndDate, PartNo, ProductItem, WorkDate, 
                         Machine, Line, Shift, Runcard, Period, LowSpeed, UpSpeed, StdSpeed, MinSpeed, MaxSpeed, AvgSpeed,RunTime, StopTime, CountingQty, OnlinePacking, WIPPacking, Target, FaultyQuantity, ScrapQuantity, 
-                        StandardAQL, InspectedAQL, create_at, plant, branch, belong_to, CustomerCode, CustomerName, IsolationQty, ModelQty, OverShortQty, OverLongQty)
+                        StandardAQL, InspectedAQL, create_at, plant, branch, belong_to, CustomerCode, CustomerName, IsolationQty, ModelQty, OverShortQty, OverLongQty, GRM_Qty)
                         Values({year}, '{week_no}', '{work_order}','{wo_start_date}','{wo_end_date}','{part_no}','{product_item}','{work_date}',
                         '{machine}','{line}', N'{shift}','{runcard}',{period},{low_speed},{up_speed},{std_speed}, 
                         {min_speed},{max_speed},{avg_speed},{run_time}, {stop_time},
                         {counting_qty},{online_packing_qty},{wip_packing_qty},{target},{faulty_qty},{scrap_qty},
                         {standard_aql}, {inspected_aql},
-                        GETDATE(), '{sPlant}', '{plant}', '{belong_to}', '{customer_code}', '{customer_name}', {isolation_qty}, {model_qty}, {overshort_qty}, {overlong_qty})
+                        GETDATE(), '{sPlant}', '{plant}', '{belong_to}', '{customer_code}', '{customer_name}', {isolation_qty}, {model_qty}, {overshort_qty}, {overlong_qty}, {GRM_Qty})
                         """
                         print(insert_sql)
                         self.mes_olap_db.execute_sql(insert_sql)
