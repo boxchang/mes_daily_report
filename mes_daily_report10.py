@@ -1929,6 +1929,11 @@ class DailyReport(Factory):
         condition = (df['OverShortQty'] + df['OverLongQty']) / df['ModelQty'] > 0.95
         df.loc[condition, ['OverShortQty', 'OverLongQty', 'DMF_Rate']] = 0
 
+        if "NBR" in self.plant:
+            df['GRM_Qty'] = ''
+        elif 'PVC' in self.plant:
+            df['OverShortQty', 'OverLongQty'] = ''
+
         return df
 
     #每台機器整天的平均總手模數、平均缺失數
