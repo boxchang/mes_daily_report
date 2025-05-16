@@ -1230,6 +1230,10 @@ class DailyReport(Factory):
         sheet.add(ColumnControl('Scrap', 'right', '#,##0', '廢品', font, hidden=False, width=11))
         sheet.add(ColumnControl('SecondGrade', 'right', '#,##0', '二級品', font, hidden=False, width=11))
         sheet.add(ColumnControl('Isolation_Qty', 'right', '#,##0', '隔離品數量', font, hidden=False, width=11))
+        sheet.add(ColumnControl('ModelQty', 'right', '0', '手模數量', font, hidden=True, width=12))
+        sheet.add(ColumnControl('OverShortQty', 'right', '0', '離型過短數量', font, hidden=True, width=12))
+        sheet.add(ColumnControl('OverLongQty', 'right', '0', '離型過長數量', font, hidden=True, width=12))
+        sheet.add(ColumnControl('GRM_Qty', 'right', '0', '剔除數量', font, hidden=True, width=12))
         sheet.add(ColumnControl('DMF_Rate', 'right', '0.00%', '離型不良率', font, hidden=False, width=12))
         sheet.add(ColumnControl('Lost_Mold_Rate', 'right', '0.00%', '缺模率', font, hidden=False, width=12))
         sheet.add(ColumnControl('OverControl', 'center', '@', '超內控', font, hidden=False, width=9))
@@ -1884,8 +1888,8 @@ class DailyReport(Factory):
             sql = f"""
             SELECT 
                 cd.MES_MACHINE Name, cd.LINE Line, CAST(DATEPART(hour, CreationTime) as INT) Period, 
-                CASE 
-                    WHEN SUM(ModelQty2) = 0 THEN 0
+                SUM(ModelQty2) ModelQty,SUM(OverShortQty2) OverShortQty,SUM(OverLongQty2) OverLongQty,0 GRM_Qty,
+                CASE WHEN SUM(ModelQty2) = 0 THEN 0
                     ELSE ROUND(
                         (SUM(OverShortQty2) + SUM(OverLongQty2)) / SUM(ModelQty2), 
                         4
@@ -1907,8 +1911,9 @@ class DailyReport(Factory):
 
         elif "PVC" in self.plant:
             sql = f"""
-            SELECT cd.MES_MACHINE Name, cd.LINE Line, CAST(DATEPART(hour, CreationTime) as INT) Period, CASE 
-                    WHEN SUM(ModelQty2) = 0 THEN 0
+            SELECT cd.MES_MACHINE Name, cd.LINE Line, CAST(DATEPART(hour, CreationTime) as INT) Period, 
+            SUM(ModelQty2) ModelQty,0 OverShortQty,0 OverLongQty,SUM(Qty2) GRM_Qty,
+            CASE WHEN SUM(ModelQty2) = 0 THEN 0
                     ELSE ROUND(SUM(Qty2) / SUM(ModelQty2), 4)
                 END AS DMF_Rate
               FROM [PMG_DEVICE].[dbo].[PVC_GRM_DATA] g
@@ -1920,7 +1925,9 @@ class DailyReport(Factory):
         rows = self.mes_db.select_sql_dict(sql)
 
         df = pd.DataFrame(rows)
-        df.loc[df['DMF_Rate'] >= 0.95, 'DMF_Rate'] = 0
+
+        condition = (df['OverShortQty'] + df['OverLongQty']) / df['ModelQty'] > 0.95
+        df.loc[condition, ['OverShortQty', 'OverLongQty', 'DMF_Rate']] = 0
 
         return df
 
