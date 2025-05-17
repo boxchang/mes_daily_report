@@ -104,7 +104,7 @@ class mes_daily_report(object):
             fixed_main_df = dr.fix_main_df(main_df)
 
             logging.info(f"{plant} sorting_data......")
-            subtotals_df, chart_df, activation_df, dashboard_df = dr.sorting_data(fixed_main_df, cosmetic_df)
+            subtotals_df, chart_df, activation_df, newWeekly_df = dr.sorting_data(fixed_main_df, cosmetic_df)
 
             logging.info(f"{plant} validate_data......")
             dr.validate_data(fixed_main_df, subtotals_df)
@@ -118,11 +118,11 @@ class mes_daily_report(object):
             if os.path.exists(excel_file):
                 file_list.append({'file_name': file_name, 'excel_file': excel_file})
 
-            # Generate dashboard
-            logging.info(f"{plant} Processing_dashboard_data......")
-            file_name_test = f'MES_{location}_{plant}_Dashboard_{report_date1}.xlsx'
+            # Generate New Weekly
+            logging.info(f"{plant} Processing_NewWeekly_data......")
+            file_name_test = f'MES_{location}_{plant}_NewWeekly_{report_date1}.xlsx'
             excel_file_test = os.path.join(self.save_path, file_name_test)
-            dr.dashboard_data(dashboard_df, excel_file_test)
+            dr.newWeekly_data(newWeekly_df, excel_file_test)
 
             # Generate Chart
             logging.info(f"{plant} generate_chart......")
@@ -757,7 +757,7 @@ class DailyReport(Factory):
         rows = []
         chart_rows = []
         activation_rows = []
-        dashboard_rows = []
+        newWeekly_rows = []
 
         for mach_name, mach_group in mach_grouped:
             mach_cosmetic_dt = cosmetic_df[(cosmetic_df['Machine'] == mach_name)]
@@ -1000,10 +1000,10 @@ class DailyReport(Factory):
             chart_rows.append(subtotal_df)
 
             # just need summary
-            dashboard_subtotal_df = subtotal_df.copy()
-            dashboard_subtotal_df['Branch'] = self.plant
-            dashboard_subtotal_df['ScrapQuantity'] = scrap_qty
-            dashboard_rows.append(dashboard_subtotal_df)
+            newWeekly_subtotal_df = subtotal_df.copy()
+            newWeekly_subtotal_df['Branch'] = self.plant
+            newWeekly_subtotal_df['ScrapQuantity'] = scrap_qty
+            newWeekly_rows.append(newWeekly_subtotal_df)
 
         # Combine the grouped data into a DataFrame
         with_subtotals_df = pd.concat(rows, ignore_index=True)
@@ -1016,12 +1016,12 @@ class DailyReport(Factory):
 
         activation_df = pd.concat(activation_rows, ignore_index=True)
 
-        dashboard_df = pd.concat(dashboard_rows, ignore_index=True)
+        newWeekly_df = pd.concat(newWeekly_rows, ignore_index=True)
 
         end_time = time.time()
         elapsed_time = end_time - start_time
         self.logger.info(f"Time taken: {elapsed_time:.2f} seconds.")
-        return with_subtotals_df, chart_df, activation_df, dashboard_df
+        return with_subtotals_df, chart_df, activation_df, newWeekly_df
 
     def validate_data(self, fixed_main_df, subtotals_df):
         start_time = time.time()
@@ -1584,8 +1584,8 @@ class DailyReport(Factory):
                 cell_above.border = thin_top_border  # ✅ 設定上方框線
         # endregion
 
-    # @dashboard
-    def generate_dashboard_excel(self, writer, df):
+    # @New Weekly
+    def generate_newWeekly_excel(self, writer, df):
         # region 1. Column Define
         font = Font(name=self.report_font, size=10, bold=False)
         sheet = DataControl()
@@ -1669,7 +1669,7 @@ class DailyReport(Factory):
         # Change column names
         df.rename(columns=header_columns, inplace=True)
 
-        namesheet = "dashboard"
+        namesheet = "NewWeekly"
         # Write data to the Excel sheet with the machine name as the sheet name
         df.to_excel(writer, sheet_name=namesheet, index=False)
 
@@ -1962,7 +1962,7 @@ class DailyReport(Factory):
         print(sql)
         self.mes_olap_db.execute_sql(sql)
 
-    def insert_dashboard_data(self, final_ds_df, plant, location, belong_to):
+    def insert_newWeekly_data(self, final_ds_df, plant, location, belong_to):
         self.delete_data(plant, location, belong_to)
 
         conn = self.mes_olap_db.conn
@@ -1993,18 +1993,18 @@ class DailyReport(Factory):
                 """
                 cursor.execute(insert_sql)
             conn.commit()   #全部成功後才commit
-            logging.info("The dashboard data Insert success.")
+            logging.info("The new weekly data Insert success.")
         except Exception as e:
             conn.rollback() #發生錯誤rollback
-            logging.info("The dashboard data Insert failed, transaction rollbacked.")
+            logging.info("The new weekly data Insert failed, transaction rollbacked.")
             raise e
 
-    #產生儀錶板資料
-    def dashboard_data(self, dashboard_df, excel_file):
+    #產生新週報資料
+    def newWeekly_data(self, newWeekly_df, excel_file):
 
         #取得當日機台總手模數、缺失手模數
         df_model = self.get_Model_rate()
-        dashboard_df = pd.merge(dashboard_df, df_model, on=['Name'], how='left')
+        newWeekly_df = pd.merge(newWeekly_df, df_model, on=['Name'], how='left')
         #取得目標設定
         extra_df= self.get_target_setting()
         #欄位覆值
@@ -2024,26 +2024,26 @@ class DailyReport(Factory):
         extra_df['FaultyRate'] = 0
         extra_df['ScrapRate'] = 0
         extra_df['LatexOverripe'] = 0
-        extra_df['ModelIsInstalled'] = (1 - (dashboard_df.ModelLostQty / dashboard_df.ModelQty)).round(4)
+        extra_df['ModelIsInstalled'] = (1 - (newWeekly_df.ModelLostQty / newWeekly_df.ModelQty)).round(4)
 
-        dashboard_df['OEE'] = dashboard_df['OEE'].round(4)
-        dashboard_df['Capacity'] = dashboard_df['Capacity'].round(4)
-        dashboard_df['Yield'] = dashboard_df['Yield'].round(4)
-        dashboard_df['Scrap'] = dashboard_df['Scrap'].round(4)
-        dashboard_df['Isolation'] = dashboard_df['Isolation'].round(4)
-        dashboard_df['DMF_Rate'] = dashboard_df['DMF_Rate'].round(4)
-        dashboard_df['Lost_Mold_Rate'] = dashboard_df['Lost_Mold_Rate'].round(4)
+        newWeekly_df['OEE'] = newWeekly_df['OEE'].round(4)
+        newWeekly_df['Capacity'] = newWeekly_df['Capacity'].round(4)
+        newWeekly_df['Yield'] = newWeekly_df['Yield'].round(4)
+        newWeekly_df['Scrap'] = newWeekly_df['Scrap'].round(4)
+        newWeekly_df['Isolation'] = newWeekly_df['Isolation'].round(4)
+        newWeekly_df['DMF_Rate'] = newWeekly_df['DMF_Rate'].round(4)
+        newWeekly_df['Lost_Mold_Rate'] = newWeekly_df['Lost_Mold_Rate'].round(4)
 
-        final_ds_df = pd.merge(dashboard_df, extra_df, on=['Branch'], how='left')
+        final_ds_df = pd.merge(newWeekly_df, extra_df, on=['Branch'], how='left')
 
         # Debug用 --產生insert清單的Excel
         #with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
-        #    self.generate_dashboard_excel(writer, final_ds_df)
+        #    self.generate_newWeekly_excel(writer, final_ds_df)
 
         #判斷是否可儲存入系統
         if not self.error_list:
             plant = self.plant
-            self.insert_dashboard_data(final_ds_df, plant, self.location, self.report_date1)
+            self.insert_newWeekly_data(final_ds_df, plant, self.location, self.report_date1)
         else:
             logging.info(f"{plant} has an error message, Can't insert into daily......")
 

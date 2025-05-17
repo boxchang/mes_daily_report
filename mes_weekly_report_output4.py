@@ -318,7 +318,7 @@ class WeeklyReport(Factory):
                     CASE WHEN Weight_Defect IS NULL THEN NULL WHEN Weight_Defect = 'LL2' THEN 'NG' ELSE 'PASS' END AS Weight_Light, 
                     CASE WHEN Weight_Defect IS NULL THEN NULL WHEN Weight_Defect = 'LL1' THEN 'NG' ELSE 'PASS' END AS Weight_Heavy,
                     Width_Value,Width_Limit,Width_Status,
-                    Pinhole_Value,Pinhole_Limit,Pinhole_Status,ModelQty,OverShortQty,OverLongQty 
+                    Pinhole_Value,Pinhole_Limit,Pinhole_Status,ModelQty,OverShortQty,OverLongQty,GRM_Qty
                     FROM [MES_OLAP].[dbo].[counting_hourly_info_raw] c
                     left join [MES_OLAP].[dbo].[week_date] wd
                     on c.Week_No = wd.week_no
@@ -333,8 +333,15 @@ class WeeklyReport(Factory):
         data = self.mes_olap_db.select_sql_dict(sql)
         df = pd.DataFrame(data)
 
-        dmf_rate_df = self.get_dmf_rate()
+        condition = (df['OverShortQty'] + df['OverLongQty']) / df['ModelQty'] > 0.95
+        df.loc[condition, ['OverShortQty', 'OverLongQty']] = ''
 
+        if "NBR" in self.plant:
+            df['GRM_Qty'] = ''
+        elif 'PVC' in self.plant:
+            df['OverShortQty', 'OverLongQty'] = ''
+
+        dmf_rate_df = self.get_dmf_rate()
         df = pd.merge(df, dmf_rate_df, on=['WorkDate', 'Machine', 'Line', 'Period'], how='left')
 
         # 設定IPQC欄位判斷條件
