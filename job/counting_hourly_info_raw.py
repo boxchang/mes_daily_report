@@ -223,7 +223,6 @@ class Output(object):
                 GROUP BY MES_MACHINE, LINE, FORMAT(CreationTime, 'yyyy-MM-dd'), CAST(DATEPART(hour, CreationTime) AS INT)
                 ORDER BY MES_MACHINE, LINE, FORMAT(CreationTime, 'yyyy-MM-dd'), CAST(DATEPART(hour, CreationTime) AS INT)
                 """
-
             elif "PVC" in sPlant2:
                 dmf_sql = f"""
                 SELECT cd.MES_MACHINE AS Machine
@@ -237,7 +236,8 @@ class Output(object):
                   FROM [PMG_DEVICE].[dbo].[PVC_GRM_DATA] g
                   JOIN [PMG_DEVICE].[dbo].[COUNTING_DATA_MACHINE] cd on g.MachineName = cd.COUNTING_MACHINE
                  WHERE CreationTime BETWEEN CONVERT(DATETIME, '{start_date} 06:00:00', 120) AND CONVERT(DATETIME, '{end_date} 05:59:59', 120)
-                 GROUP BY cd.MES_MACHINE, cd.LINE, CAST(DATEPART(hour, CreationTime) AS INT) 
+                   AND cd.MES_MACHINE = '{mach}'
+                 GROUP BY cd.MES_MACHINE, cd.LINE, FORMAT(CreationTime, 'yyyy-MM-dd'), CAST(DATEPART(hour, CreationTime) AS INT) 
                     """
             print(dmf_sql)
             dmf_raws = self.mes_db.select_sql_dict(dmf_sql)
@@ -342,6 +342,7 @@ class Output(object):
                         overshort_qty = row['OverShortQty'] if row['OverShortQty'] != 'null' else 0
                         overlong_qty = row['OverLongQty'] if row['OverLongQty'] != 'null' else 0
                         model_qty = row['ModelQty'] if row['ModelQty'] != 'null' else 0
+                        GRM_Qty = row['GRM_Qty'] if row['GRM_Qty'] != 'null' else 0
 
                         if work_date != '':
                             if int(period) >= 0 and int(period) <= 5:
@@ -373,8 +374,8 @@ report_date1 = report_date1.strftime('%Y%m%d')
 report_date2 = datetime.today()
 report_date2 = report_date2.strftime('%Y%m%d')
 
-#report_date1 = '20250512'
-#report_date2 = '20250513'
+#report_date1 = '20250516'
+#report_date2 = '20250517'
 
 config_file = "..\mes_daily_report.config"
 config = configparser.ConfigParser()
