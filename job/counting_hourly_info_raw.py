@@ -374,8 +374,8 @@ report_date1 = report_date1.strftime('%Y%m%d')
 report_date2 = datetime.today()
 report_date2 = report_date2.strftime('%Y%m%d')
 
-#report_date1 = '20250516'
-#report_date2 = '20250517'
+#report_date1 = '20250511'
+#report_date2 = '20250512'
 
 config_file = "..\mes_daily_report.config"
 config = configparser.ConfigParser()

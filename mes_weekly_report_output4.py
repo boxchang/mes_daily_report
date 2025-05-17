@@ -334,12 +334,14 @@ class WeeklyReport(Factory):
         df = pd.DataFrame(data)
 
         condition = (df['OverShortQty'] + df['OverLongQty']) / df['ModelQty'] > 0.95
-        df.loc[condition, ['OverShortQty', 'OverLongQty']] = ''
+        df.loc[condition, ['ModelQty','OverShortQty', 'OverLongQty']] = ''
 
         if "NBR" in self.plant:
             df['GRM_Qty'] = ''
         elif 'PVC' in self.plant:
             df['OverShortQty', 'OverLongQty'] = ''
+
+        df.loc[df['ModelQty'] == 0, ['ModelQty', 'OverShortQty', 'OverLongQty']] = ''
 
         dmf_rate_df = self.get_dmf_rate()
         df = pd.merge(df, dmf_rate_df, on=['WorkDate', 'Machine', 'Line', 'Period'], how='left')
@@ -639,6 +641,7 @@ class WeeklyReport(Factory):
         sheet.add(ColumnControl('ModelQty', 'right', '0', '手模數量', font, hidden=False, width=11))
         sheet.add(ColumnControl('OverShortQty', 'right', '0', '離型過短數量', font, hidden=False, width=11))
         sheet.add(ColumnControl('OverLongQty', 'right', '0', '離型過長數量', font, hidden=False, width=11))
+        sheet.add(ColumnControl('GRM_Qty', 'right', '0', '剔除數量', font, hidden=False, width=11))
 
         header_columns = sheet.header_columns
         column_letter = sheet.column_letter
@@ -680,6 +683,7 @@ class WeeklyReport(Factory):
         # # 設置欄讓其可以折疊/展開
         worksheet.column_dimensions.group(column_letter['Tensile_Value'], column_letter['Pinhole_Status'],
                                           hidden=True)
+        worksheet.column_dimensions[column_letter['ModelQty']].hidden = True
 
         try:
             img = Image(chart_img)

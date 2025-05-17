@@ -2134,8 +2134,8 @@ report_date1 = report_date1.strftime('%Y%m%d')
 report_date2 = datetime.today()
 report_date2 = report_date2.strftime('%Y%m%d')
 
-#report_date1 = "20250504"
-#report_date2 = "20250505"
+#report_date1 = "20250512"
+#report_date2 = "20250513"
 
 report = mes_daily_report(report_date1, report_date2)
 report.main()
