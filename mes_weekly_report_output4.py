@@ -334,17 +334,21 @@ class WeeklyReport(Factory):
         df = pd.DataFrame(data)
 
         condition = (df['OverShortQty'] + df['OverLongQty']) / df['ModelQty'] > 0.95
-        df.loc[condition, ['ModelQty','OverShortQty', 'OverLongQty']] = ''
+        df.loc[condition, ['ModelQty', 'OverShortQty', 'OverLongQty']] = ''
+        df['ModelQty'] = df['ModelQty'].replace('', np.nan).fillna(0)
+        df['OverShortQty'] = df['OverShortQty'].replace('', np.nan).fillna(0)
+        df['OverLongQty'] = df['OverLongQty'].replace('', np.nan).fillna(0)
+        df['GRM_Qty'] = df['GRM_Qty'].replace('', np.nan).fillna(0)
 
         if "NBR" in self.plant:
             df['GRM_Qty'] = ''
         elif 'PVC' in self.plant:
             df['OverShortQty', 'OverLongQty'] = ''
 
-        df.loc[df['ModelQty'] == 0, ['ModelQty', 'OverShortQty', 'OverLongQty']] = ''
+        df.loc[df['ModelQty'] == 0, ['ModelQty', 'OverShortQty', 'OverLongQty', 'GRM_Qty']] = ''
 
-        dmf_rate_df = self.get_dmf_rate()
-        df = pd.merge(df, dmf_rate_df, on=['WorkDate', 'Machine', 'Line', 'Period'], how='left')
+        # dmf_rate_df = self.get_dmf_rate()
+        # df = pd.merge(df, dmf_rate_df, on=['WorkDate', 'Machine', 'Line', 'Period'], how='left')
 
         # 設定IPQC欄位判斷條件
         df['IPQC'] = df.apply(lambda row: "" if pd.isna(row['WorkOrder']) or row['WorkOrder'] == ""
@@ -638,10 +642,10 @@ class WeeklyReport(Factory):
         sheet.add(ColumnControl('Pinhole_Status', 'center', '@', '針孔結果', font, hidden=False, width=10, level=1))
         sheet.add(ColumnControl('IPQC', 'center', '@', 'IPQC', font, hidden=False, width=10))
         sheet.add(ColumnControl('IsolationQty', 'right', '#,##0', '隔離品數量', font, hidden=False, width=11))
-        sheet.add(ColumnControl('ModelQty', 'right', '0', '手模數量', font, hidden=False, width=11))
-        sheet.add(ColumnControl('OverShortQty', 'right', '0', '離型過短數量', font, hidden=False, width=11))
-        sheet.add(ColumnControl('OverLongQty', 'right', '0', '離型過長數量', font, hidden=False, width=11))
-        sheet.add(ColumnControl('GRM_Qty', 'right', '0', '剔除數量', font, hidden=False, width=11))
+        sheet.add(ColumnControl('ModelQty', 'right', '0', '手模數量', font, hidden=True, width=11))
+        sheet.add(ColumnControl('OverShortQty', 'right', '0', '離型過短數量', font, hidden=True, width=11))
+        sheet.add(ColumnControl('OverLongQty', 'right', '0', '離型過長數量', font, hidden=True, width=11))
+        sheet.add(ColumnControl('GRM_Qty', 'right', '0', '剔除數量', font, hidden=True, width=11))
 
         header_columns = sheet.header_columns
         column_letter = sheet.column_letter
@@ -683,7 +687,6 @@ class WeeklyReport(Factory):
         # # 設置欄讓其可以折疊/展開
         worksheet.column_dimensions.group(column_letter['Tensile_Value'], column_letter['Pinhole_Status'],
                                           hidden=True)
-        worksheet.column_dimensions[column_letter['ModelQty']].hidden = True
 
         try:
             img = Image(chart_img)
@@ -1218,7 +1221,12 @@ class WeeklyReport(Factory):
 
             for shift in machine_df['Shift'].unique():  # Loop through each unique Line
                 for line in machine_df['Line'].unique():
-                    filtered_df = machine_df[(machine_df['Line'] == line) & (machine_df['Shift'] == shift)]
+                    filtered_df = machine_df[(machine_df['Line'] == line) & (machine_df['Shift'] == shift)].copy()
+                    filtered_df['OverShortQty'] = filtered_df['OverShortQty'].replace('', np.nan).fillna(0)
+                    filtered_df['OverLongQty'] = filtered_df['OverLongQty'].replace('', np.nan).fillna(0)
+                    filtered_df['ModelQty'] = filtered_df['ModelQty'].replace('', np.nan).fillna(0)
+                    filtered_df['GRM_Qty'] = filtered_df['GRM_Qty'].replace('', np.nan).fillna(0)
+
                     countingQty = filtered_df['CountingQty'].sum()
                     faultyQty = filtered_df['FaultyQuantity'].sum()
                     scrapQty = filtered_df['ScrapQuantity'].sum()
@@ -1234,7 +1242,17 @@ class WeeklyReport(Factory):
 
                     output = onlinePacking + wipPacking + faultyQty + scrapQty
                     isolationRate = round(isolationQty / output, 3) if int(output) > 0 else 0
-                    dmf_rate = round(filtered_df['DMF_Rate'].mean(), 4)
+
+                    over_short_qty = filtered_df['OverShortQty'].sum()
+                    over_long_qty = filtered_df['OverLongQty'].sum()
+                    model_qty = filtered_df['ModelQty'].sum()
+                    grm_qty = filtered_df['GRM_Qty'].sum()
+                    if 'NBR' in self.plant:
+                        dmf_rate = round((over_short_qty + over_long_qty) / model_qty,
+                                         4) if model_qty > 0 else 0
+                    elif 'PVC' in self.plant:
+                        dmf_rate = round(grm_qty / model_qty,
+                                         4) if model_qty > 0 else 0
 
                     summary_row = {
                         'Name': machine_name,
@@ -1257,6 +1275,10 @@ class WeeklyReport(Factory):
                         'OEE': '',
                         'Achievement Rate': rate,
                         'IsolationRate': isolationRate,
+                        'OverShortQty': over_short_qty,
+                        'OverLongQty': over_long_qty,
+                        'ModelQty': model_qty,
+                        'GRM_Qty': grm_qty,
                         'DMF_Rate': dmf_rate
                     }
                     summary_data.append(summary_row)
@@ -1288,8 +1310,17 @@ class WeeklyReport(Factory):
             rate = round((onlinePacking+wipPacking) / target, 3) if int(target) > 0 else 0
             isolationRate = round(isolationQty / output, 3) if int(output) > 0 else 0
 
-            dmf_rate_values = [item['DMF_Rate'] for item in summary_data if item['Name'] == machine_name]
-            dmf_rate = round(sum(dmf_rate_values) / len(dmf_rate_values), 4) if dmf_rate_values else 0
+            # dmf_rate_values = [item['DMF_Rate'] for item in summary_data if item['Name'] == machine_name]
+            # dmf_rate = round(sum(dmf_rate_values) / len(dmf_rate_values), 4) if dmf_rate_values else 0
+
+            over_short_qty = sum(item['OverShortQty'] for item in summary_data if item['Name'] == machine_name)
+            over_long_qty = sum(item['OverLongQty'] for item in summary_data if item['Name'] == machine_name)
+            model_qty = sum(item['ModelQty'] for item in summary_data if item['Name'] == machine_name)
+            grm_qty = filtered_df['GRM_Qty'].sum()
+            if 'NBR' in self.plant:
+                dmf_rate = round((over_short_qty + over_long_qty) / model_qty, 4) if model_qty > 0 else 0
+            elif 'PVC' in self.plant:
+                dmf_rate = round(grm_qty / model_qty, 4) if model_qty > 0 else 0
 
             summary_data.append({'Name': machine_name, 'Date': tmp_week, 'Shift': '', 'Line': '',
                                  'CountingQty': countingQty, 'FaultyQuantity': faultyQty, 'ScrapQuantity': scrapQty,
@@ -1355,7 +1386,7 @@ class WeeklyReport(Factory):
 
         sheet.add(ColumnControl('IsolationRate', 'right', '0.00%', '隔離率', font, hidden=False, width=10,
                                 comment="隔離品數量/(包裝確認量+半成品入庫量+二級品數量+廢品數量)", comment_width=700))
-        sheet.add(ColumnControl('DMF_Rate', 'center', '0.00%', '離型不良率', font, hidden=False, width=13))
+        sheet.add(ColumnControl('DMF_Rate', 'center', '0.00%', '離型不良率', font, hidden=True, width=13))
 
 
 

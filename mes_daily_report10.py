@@ -104,7 +104,7 @@ class mes_daily_report(object):
             fixed_main_df = dr.fix_main_df(main_df)
 
             logging.info(f"{plant} sorting_data......")
-            subtotals_df, chart_df, activation_df, newWeekly_df = dr.sorting_data(fixed_main_df, cosmetic_df)
+            subtotals_df, chart_df, activation_df, newWeekly_df = dr.sorting_data(plant, fixed_main_df, cosmetic_df)
 
             logging.info(f"{plant} validate_data......")
             dr.validate_data(fixed_main_df, subtotals_df)
@@ -707,7 +707,7 @@ class DailyReport(Factory):
 
         return main_df
 
-    def sorting_data(self, df, cosmetic_df):
+    def sorting_data(self, plant, df, cosmetic_df):
         start_time = time.time()
 
         def join_values(col):
@@ -815,6 +815,16 @@ class DailyReport(Factory):
 
                 line_pinhole_dpm = self.calculate_pinhole_dpm(line_group, line_cosmetic_dt)
 
+                line_over_short_qty = line_group['OverShortQty'].sum()
+                line_over_long_qty = line_group['OverLongQty'].sum()
+                line_model_qty = line_group['ModelQty'].sum()
+                line_grm_qty = line_group['GRM_Qty'].sum()
+
+                if 'NBR' in plant:
+                    line_dmf_rate = round((line_over_short_qty+line_over_long_qty) / line_model_qty, 4) if line_model_qty > 0 else 0
+                elif 'PVC' in plant:
+                    line_dmf_rate = round(line_grm_qty / line_model_qty, 4) if line_model_qty > 0 else 0
+
                 try:
                     line_pinhole_rate = round(line_pinhole_dpm / 1_000_000, 4)
                 except Exception as e:
@@ -836,7 +846,7 @@ class DailyReport(Factory):
                     'OnlinePacking': line_group['OnlinePacking'].sum(),
                     'WIPPacking': line_group['WIPPacking'].sum(),
                     'Isolation_Qty': line_group['Isolation_Qty'].sum(),
-                    'DMF_Rate': line_group['DMF_Rate'].mean(),
+                    'DMF_Rate': line_dmf_rate,
                     'Lost_Mold_Rate': line_group['Lost_Mold_Rate'].mean(),
                     'PinholeRate': line_pinhole_rate,
                     'Scrap': line_scrap_rate,
@@ -962,6 +972,16 @@ class DailyReport(Factory):
             over_control_qty = mach_group['OverControlQty'].sum()
             over_control_rate = round(over_control_qty/tmp_qty, 2) if tmp_qty > 0 else 0
 
+            over_short_qty = mach_group['OverShortQty'].sum()
+            over_long_qty = mach_group['OverLongQty'].sum()
+            model_qty = mach_group['ModelQty'].sum()
+            grm_qty = mach_group['GRM_Qty'].sum()
+
+            if 'NBR' in plant:
+                dmf_rate = round((over_short_qty + over_long_qty) / model_qty, 4) if model_qty > 0 else 0
+            elif 'PVC' in plant:
+                dmf_rate = round(grm_qty / model_qty, 4) if model_qty > 0 else 0
+
             subtotal = {
                 'Name': join_values(mach_group['Name']),
                 'ProductItem': join_values(mach_group['ProductItem']),
@@ -978,7 +998,7 @@ class DailyReport(Factory):
                 'OnlinePacking': mach_group['OnlinePacking'].sum(),
                 'WIPPacking': mach_group['WIPPacking'].sum(),
                 'Isolation_Qty': mach_group['Isolation_Qty'].sum(),
-                'DMF_Rate': mach_group['DMF_Rate'].mean(),  # 離型不良率
+                'DMF_Rate': dmf_rate,  # 離型不良率
                 'Lost_Mold_Rate': mach_group['Lost_Mold_Rate'].mean(),  # 缺模率
                 'PinholeRate': pinhole_rate,
                 'Scrap': tmp_scrap,
@@ -1117,7 +1137,7 @@ class DailyReport(Factory):
         sheet.add(ColumnControl('Lost_Mold_Rate', 'center', '0.00%', f'缺模率≤ {round(self.former_miss_target*100,2):g}%', font,
                           hidden=False, width=13, limit=[self.former_miss_target, None]))
         sheet.add(ColumnControl('OpticalNGRate', 'center', '0.00%', '光檢不良率', font, hidden=False, width=15))
-        sheet.add(ColumnControl('DMF_Rate', 'center', '0.00%', '離型不良率', font, hidden=False, width=13))
+        sheet.add(ColumnControl('DMF_Rate', 'center', '0.00%', '離型不良率', font, hidden=True, width=13))
         sheet.add(ColumnControl('Cosmetic_DPM', 'right', '#,##0', '外觀DPM', font, hidden=False, width=10))
         sheet.add(ColumnControl('Pinhole_DPM', 'right', '#,##0', '針孔DPM', font, hidden=False, width=10))
 
@@ -1234,7 +1254,7 @@ class DailyReport(Factory):
         sheet.add(ColumnControl('OverShortQty', 'right', '0', '離型過短數量', font, hidden=True, width=12))
         sheet.add(ColumnControl('OverLongQty', 'right', '0', '離型過長數量', font, hidden=True, width=12))
         sheet.add(ColumnControl('GRM_Qty', 'right', '0', '剔除數量', font, hidden=True, width=12))
-        sheet.add(ColumnControl('DMF_Rate', 'right', '0.00%', '離型不良率', font, hidden=False, width=12))
+        sheet.add(ColumnControl('DMF_Rate', 'right', '0.00%', '離型不良率', font, hidden=True, width=12))
         sheet.add(ColumnControl('Lost_Mold_Rate', 'right', '0.00%', '缺模率', font, hidden=False, width=12))
         sheet.add(ColumnControl('OverControl', 'center', '@', '超內控', font, hidden=False, width=9))
         sheet.add(ColumnControl('WeightValue', 'center', '0.00', 'IPQC克重', font, hidden=False, width=11, data_type=float))
