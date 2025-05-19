@@ -2055,6 +2055,7 @@ class DailyReport(Factory):
         newWeekly_df['Lost_Mold_Rate'] = newWeekly_df['Lost_Mold_Rate'].round(4)
 
         final_ds_df = pd.merge(newWeekly_df, extra_df, on=['Branch'], how='left')
+        final_ds_df = final_ds_df.fillna(0)
 
         # Debug用 --產生insert清單的Excel
         #with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
