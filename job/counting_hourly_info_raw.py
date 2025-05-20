@@ -162,8 +162,8 @@ class Output(object):
                     ON ft.RunCardId = rc.id AND ft.WorkOrderId = wo.id
                 LEFT JOIN [PMGMES].[dbo].[PMG_MES_Scrap] sp
                     ON sp.RunCardId = rc.id AND sp.WorkOrderId = wo.id
-				LEFT JOIN [dbo].[PMG_MES_WorkInProcess] op ON rc.Id = op.RunCardId and op.PackingType = 'OnlinePacking'
-				LEFT JOIN [dbo].[PMG_MES_WorkInProcess] wp ON rc.Id = wp.RunCardId and wp.PackingType = 'WIPPacking'
+				LEFT JOIN [PMGMES].[dbo].[PMG_MES_WorkInProcess] op ON rc.Id = op.RunCardId and op.PackingType = 'OnlinePacking'
+				LEFT JOIN [PMGMES].[dbo].[PMG_MES_WorkInProcess] wp ON rc.Id = wp.RunCardId and wp.PackingType = 'WIPPacking'
 				LEFT JOIN IsolationTable iso on iso.RunCardId = rc.Id
                 WHERE rc.MachineName = '{mach}'
                     AND ((rc.InspectionDate = '{start_date}' AND rc.Period BETWEEN 6 AND 23)
