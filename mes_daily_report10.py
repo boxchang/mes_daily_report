@@ -132,6 +132,8 @@ class mes_daily_report(object):
             dr.generate_chart(chart_df, image_file)
             image_buffers.append(image_file)
 
+        dr.check_comment()
+
         if not fix_mode:
             logging.info(f"{location} send_email......")
             subject = f'[{location} Report] 產量日報表 {self.report_date1}'
@@ -1952,7 +1954,7 @@ class DailyReport(Factory):
         if "NBR" in self.plant:
             df['GRM_Qty'] = ''
         elif 'PVC' in self.plant:
-            df['OverShortQty', 'OverLongQty'] = ''
+            df[['OverShortQty', 'OverLongQty']] = ''
 
         return df
 
@@ -2063,10 +2065,9 @@ class DailyReport(Factory):
 
         #判斷是否可儲存入系統
         if not self.error_list:
-            plant = self.plant
-            self.insert_newWeekly_data(final_ds_df, plant, self.location, self.report_date1)
+            self.insert_newWeekly_data(final_ds_df, self.plant, self.location, self.report_date1)
         else:
-            logging.info(f"{plant} has an error message, Can't insert into daily......")
+            logging.info(f"{self.plant} has an error message, Can't insert into daily......")
 
     def send_email(self, config, subject, file_list, image_buffers, msg_list, error_list):
         logging.info(f"Start to send Email")
@@ -2148,6 +2149,18 @@ class DailyReport(Factory):
         </table>
         """
         return result
+
+    def check_comment(self):
+        sql = f"""
+        SELECT [report_date],[comment]
+          FROM [MES_OLAP].[dbo].[daily_report_comment]
+          WHERE report_date = '{self.report_date1}'
+        """
+        rows = self.mes_olap_db.select_sql_dict(sql)
+
+        if len(rows) > 0:
+            for row in rows:
+                self.msg_list.append(row['comment'])
 
 report_date1 = datetime.today() - timedelta(days=1)
 report_date1 = report_date1.strftime('%Y%m%d')
