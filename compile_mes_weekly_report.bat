@@ -1,0 +1,2 @@
+pyinstaller -F mes_weekly_report_output4.py
+pause
